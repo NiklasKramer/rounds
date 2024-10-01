@@ -1,6 +1,6 @@
 Engine_Rounds : CroneEngine {
     var pg, buffer,path="", routine, stepInfo, numSteps, numSegments, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, direction, yieldTime, useSampleLength=1, stepTime = 0.1, stepLength,
-	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.01;
+	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.5, useEnv = 0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -80,20 +80,21 @@ Engine_Rounds : CroneEngine {
         pg = ParGroup.head(context.xg);
 		
 		SynthDef(\simpleBufferSynth, {
-			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse=0, pan = 0, out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.01,
+			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse=0, pan = 0, out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5,
 			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 0|
 			
 			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, envGen, percEnvGen, fadeEnvGen, safetyEnvGen;
 
 			segmentSize = BufDur.kr(bufnum) / numSegments;
 			phasorStart = startSegment / numSegments * BufFrames.kr(bufnum);
-			phasorEnd = (startSegment + 1) / numSegments * BufFrames.kr(bufnum);
+			// phasorEnd = (startSegment + 1) / numSegments * BufFrames.kr(bufnum);
+			phasorEnd = BufFrames.kr(bufnum);
 
 			rate = rate * (1 - (reverse * 2));
 			rate = Lag.kr(rate, rateLag);  
 
 			phase = Phasor.ar(
-				trig: InTrig.kr(trigIn),
+				trig: 1,
 				rate: rate * BufRateScale.kr(bufnum), 
 				start: phasorStart,  
 				end: phasorEnd,
@@ -103,20 +104,17 @@ Engine_Rounds : CroneEngine {
 
 			bufplay = BufRd.ar(2, bufnum, phase, loop: 0);
 
-			
 			amp = Lag.kr(amp, ampLag);     
 			pan = Lag.kr(pan, panLag);     
 
 			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
+			gate = In.kr(trigIn);
 
-			gate = InTrig.kr(trigIn);
-
-			percEnvGen = EnvGen.ar(Env.perc((attack + fade), release), gate: gate);
-			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]), gate: gate);
+			percEnvGen = EnvGen.ar(Env.perc((attack + fade), release),gate: gate, doneAction: Done.freeSelf);
+			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]),gate:gate, doneAction: Done.freeSelf);
 			envGen = Select.ar(useEnv, [fadeEnvGen,percEnvGen]);
-			safetyEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [0.1, segmentSize-0.3, 0.1]), gate: gate);
 
-			Out.ar(out, bufplay * amp * vol * envGen * safetyEnvGen);
+			Out.ar(out, bufplay * amp * vol * envGen);
 		}).add;
 
 
@@ -160,17 +158,27 @@ Engine_Rounds : CroneEngine {
 						var releaseR = release + (rrand(0.001, 3) * randomRelease);
 
 						activeStep = stepIndex;
-
-						simpleBuffer.set(\trig, 1);
-						simpleBuffer.set(\startSegment, startSegment);
-						simpleBuffer.set(\rate, rate);
-						simpleBuffer.set(\reverse, reverse);
-						simpleBuffer.set(\amp, amp);
-						simpleBuffer.set(\pan, pan);
-						simpleBuffer.set(\fade,fade);
-						simpleBuffer.set(\attack, attackR);
-						simpleBuffer.set(\release, releaseR);
 						trigBus.set(1);
+
+
+						simpleBuffer = Synth.new(\simpleBufferSynth, [
+								\bufnum, buffer,
+								\startSegment, startSegment,
+								\endSegment, startSegment + 1,
+								\numSegments, numSegments,
+								\amp, amp,
+								\rate, rate,
+								\pan, pan,
+								\out, context.out_b.index,
+								\trigIn, trigBus.index,
+								\useEnv, useEnv,
+								\attack, attackR,
+								\release, releaseR,
+								\reverse, reverse,
+								\vol, 1,
+						], target: pg);
+						
+						
 						stepLength = if(useSampleLength == 1, segmentLength, stepTime);
 						yieldTime = if(active == 1, stepLength, 0);
 
@@ -240,24 +248,23 @@ Engine_Rounds : CroneEngine {
     
 		this.addCommand(\vol, "f", { |msg|
 			var vol = msg[1];
-			simpleBuffer.set(\vol, vol);
+			// simpleBuffer.set(\vol, vol);
 		});
 
 		// Attack
 		this.addCommand(\attack, "f", { |msg|
 			attack = msg[1];
-			simpleBuffer.set(\attack, attack);
+			// simpleBuffer.set(\attack, attack);
 		});
 
 		// Release
 		this.addCommand(\release, "f", { |msg|
 			release = msg[1];
-			simpleBuffer.set(\release, release);
+			// simpleBuffer.set(\release, release);
 		});
 
 		this.addCommand(\useEnv, "f", { |msg|
-			var useEnv = msg[1];
-			simpleBuffer.set(\useEnv, useEnv);
+			 useEnv = msg[1];
 		});
 
 		this.addCommand(\direction, "f", { |msg|
@@ -326,7 +333,7 @@ Engine_Rounds : CroneEngine {
 			"Attempting to start voice".postln;
 			if (routine.isPlaying.not) {
 				routine.reset;
-				simpleBuffer.set(\vol, 1);
+				// simpleBuffer.set(\vol, 1);
 				routine.play;
 				context.server.sync;
 				"Voice started".postln;
@@ -339,7 +346,7 @@ Engine_Rounds : CroneEngine {
         // Command to stop the routine
         this.addCommand(\stop, "", { |msg|
 			"Attempting to stop voice".postln;
-			simpleBuffer.set(\vol, 0);
+			// simpleBuffer.set(\vol, 0);
             routine.stop;
 			context.server.sync;
         });

@@ -7,13 +7,49 @@ steps = 16
 active_step = 0
 sync = 0
 
+function generate_circle_coordinates(steps)
+  -- Check if the number of steps is within the valid range
+  if steps < 8 then steps = 8 end
+  if steps > 64 then steps = 64 end
 
-step_positions_8 = {
+  -- Circle properties
+  local center_x = 8 -- Center of the grid (0-indexed grid center is at 8, 8)
+  local center_y = 8
+  local radius = 7   -- Maximum radius to fit within the grid
+
+  -- Table to store the generated coordinates
+  local coords = {}
+
+  -- Angle between each step (in radians)
+  local angle_step = (2 * math.pi) / steps
+
+  -- Loop to generate each step's coordinates
+  for i = 1, steps do
+    -- Calculate the angle for the current step
+    local angle = (i - 1) * angle_step
+
+    -- Calculate the x, y positions using the angle and radius
+    local x = math.floor(center_x + radius * math.cos(angle) + 0.5)
+    local y = math.floor(center_y + radius * math.sin(angle) + 0.5)
+
+    -- Ensure the coordinates stay within the 1-16 grid range
+    x = math.max(1, math.min(x, 16))
+    y = math.max(1, math.min(y, 16))
+
+    -- Add the {x, y} coordinate to the coords table
+    table.insert(coords, { x, y })
+  end
+
+  -- Return the coordinates
+  return coords
+end
+
+step_positions_8_ = {
   { 2,  2 }, { 3, 2 }, { 6, 2 }, { 7, 2 },
   { 10, 2 }, { 11, 2 }, { 14, 2 }, { 15, 2 }
 }
 
-step_positions_16 = {
+step_positions_16_ = {
   { 2, 2 }, { 3, 2 }, { 2, 3 }, { 3, 3 },
   { 6, 2 }, { 7, 2 }, { 6, 3 }, { 7, 3 },
   { 10, 2 }, { 11, 2 }, { 10, 3 }, { 11, 3 },
@@ -21,7 +57,7 @@ step_positions_16 = {
 }
 
 
-step_positions_32 = {
+step_positions_32_ = {
   { 2, 2 }, { 3, 2 }, { 2, 3 }, { 3, 3 },
   { 2, 4 }, { 3, 4 }, { 2, 5 }, { 3, 5 },
   { 6, 2 }, { 7, 2 }, { 6, 3 }, { 7, 3 },
@@ -33,6 +69,52 @@ step_positions_32 = {
   { 6, 2 }, { 7, 2 }, { 6, 3 }, { 7, 3 },
 
 }
+
+local step_positions_32 = {
+  { 1,  9 },  -- Step 1
+  { 1,  8 },  -- Step 2
+  { 1,  7 },  -- Step 3
+  { 1,  6 },  -- Step 4
+  { 1,  5 },  -- Step 5
+  { 1,  4 },  -- Step 6
+  { 1,  3 },  -- Step 7
+  { 1,  2 },  -- Step 8
+
+  { 1,  1 },  -- Step 9
+  { 2,  1 },  -- Step 10
+  { 3,  1 },  -- Step 11
+  { 4,  1 },  -- Step 12
+  { 5,  1 },  -- Step 13
+  { 6,  1 },  -- Step 14
+  { 7,  1 },  -- Step 15
+  { 8,  1 },  -- Step 16
+  { 9,  1 },  -- Step 17
+  { 10, 1 },  -- Step 18
+  { 11, 1 },  -- Step 19
+  { 12, 1 },  -- Step 20
+  { 13, 1 },  -- Step 21
+  { 14, 1 },  -- Step 22
+  { 15, 1 },  -- Step 23
+  { 16, 1 },  -- Step 24
+
+  { 16, 2 },  -- Step 25
+  { 16, 3 },  -- Step 26
+  { 16, 4 },  -- Step 27
+  { 16, 5 },  -- Step 28
+  { 16, 6 },  -- Step 29
+  { 16, 7 },  -- Step 30
+  { 16, 8 },  -- Step 31
+  { 16, 9 }   -- Step 32
+}
+
+local step_positions_16 = generate_circle_coordinates(16)
+local step_positions_8 = generate_circle_coordinates(8)
+
+-- local step_positions_32 = generate_circle_coordinates(32)
+
+
+
+
 
 local step_positions = step_positions_16
 
