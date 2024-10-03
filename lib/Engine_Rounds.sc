@@ -145,9 +145,10 @@ Engine_Rounds : CroneEngine {
 						var stepIndex = options[direction];
 						var step = stepInfo[stepIndex % stepInfo.size];
 						var startSegment = step[0];
-						var rate = step[1] 
-						+ wchoose([0,1],[1-randomOctave,randomOctave])
-						+ wchoose([0,0.5],[1-randomFith,randomFith]);
+						var rate = (step[1] 
+						+ wchoose([0,0.5],[1-randomFith,randomFith]))
+						* wchoose([1,2],[1-randomOctave,randomOctave]);
+
 
 						var reverse = wchoose([step[2], 1], [1 - randomReverse, randomReverse]);
 						var amp = step[3] + (rrand(0, 1) * randomAmp);
