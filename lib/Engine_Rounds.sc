@@ -1,6 +1,6 @@
 Engine_Rounds : CroneEngine {
     var pg, buffer,path="", routine, stepInfo, numSteps, numSegments, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, direction, yieldTime, useSampleLength=1, stepTime = 0.1, stepLength,
-	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.5, useEnv = 0;
+	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.5, useEnv = 0, semitones=0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -19,42 +19,15 @@ Engine_Rounds : CroneEngine {
 						buffer = newBuffer;  // Store buffer
 						segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
 						"Buffer loaded. Segment length: %".format(segmentLength).postln;
-
-						// Now create the synth after buffer is loaded
-						simpleBuffer = Synth.new(\simpleBufferSynth, [
-							\bufnum, buffer,
-							\startSegment, 0,
-							\endSegment, 1,
-							\numSegments, numSegments,
-							\amp, 1,
-							\rate, 1,
-							\pan, 0,
-							\out, context.out_b.index,
-							\trig, 0,
-							\trigIn, trigBus.index,
-						], target: pg);
 					});
 				}, {
 					// Stereo file
 					(tempBuffer.numChannels == 2).if({
 						buffer = Buffer.readChannel(context.server, path, 0, -1, [0, 1], {
-							segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
+							segmentLength = buffer.duration / numSegments; 
 							"Stereo buffer loaded. Segment length: %".format(segmentLength).postln;
 							trigBus  = Bus.control(context.server, 1);
-							// Now create the synth after buffer is loaded
-							simpleBuffer = Synth.new(\simpleBufferSynth, [
-								\bufnum, buffer,
-								\startSegment, 0,
-								\endSegment, 1,
-								\numSegments, numSegments,
-								\amp, 1,
-								\rate, 1,
-								\pan, 0,
-								\out, context.out_b.index,
-								\trig, 0,
-								\trigIn, trigBus.index,
-					
-							], target: pg);
+						
 						});
 					}, {
 						"Unsupported number of channels: %".format(tempBuffer.numChannels).postln;
@@ -62,11 +35,9 @@ Engine_Rounds : CroneEngine {
 				});
 			});
 		}, {
-			"File not found: %".format(path).postln;  // This was missing postln
+			"File not found: %".format(path).postln;
 		});
 	}
-
-
 
 
     // Allocate buffer and initialize routine
@@ -83,21 +54,24 @@ Engine_Rounds : CroneEngine {
 			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse=0, pan = 0, out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5,
 			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 0|
 			
-			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, envGen, percEnvGen, fadeEnvGen, safetyEnvGen;
+			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, safetyEnvGen;
 
 			segmentSize = BufDur.kr(bufnum) / numSegments;
 			phasorStart = startSegment / numSegments * BufFrames.kr(bufnum);
-			// phasorEnd = (startSegment + 1) / numSegments * BufFrames.kr(bufnum);
+			phasorEndRev = (startSegment + 1) / numSegments * BufFrames.kr(bufnum);
 			phasorEnd = BufFrames.kr(bufnum);
+
+			end = Select.kr(reverse, [phasorEnd, phasorEndRev]);
+			start = Select.kr(reverse, [phasorStart, 0]);
 
 			rate = rate * (1 - (reverse * 2));
 			rate = Lag.kr(rate, rateLag);  
 
 			phase = Phasor.ar(
-				trig: 1,
+				trig: Impulse.ar(0),
 				rate: rate * BufRateScale.kr(bufnum), 
-				start: phasorStart,  
-				end: phasorEnd,
+				start: start,  
+				end: end,
 				resetPos: phasorStart
 			
 			);
@@ -108,7 +82,8 @@ Engine_Rounds : CroneEngine {
 			pan = Lag.kr(pan, panLag);     
 
 			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
-			gate = In.kr(trigIn);
+			
+			gate = Impulse.ar(0);
 
 			percEnvGen = EnvGen.ar(Env.perc((attack + fade), release),gate: gate, doneAction: Done.freeSelf);
 			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]),gate:gate, doneAction: Done.freeSelf);
@@ -118,11 +93,13 @@ Engine_Rounds : CroneEngine {
 		}).add;
 
 
+
+
 		
 		// Number of steps and segments
 
 		
-		numSteps = 32;
+		numSteps = 64;
         numSegments = 16;
         // Initialize stepInfo array for the single voice
         stepInfo = Array.fill(numSteps, { |i| [i, 1, 0 ,1, 0, 1] });  // Default values: [startSegment, rate, reverse, amp, pan, active]
@@ -145,13 +122,15 @@ Engine_Rounds : CroneEngine {
 						var stepIndex = options[direction];
 						var step = stepInfo[stepIndex % stepInfo.size];
 						var startSegment = step[0];
-						var rate = (step[1] 
-						+ wchoose([0,0.5],[1-randomFith,randomFith]))
-						* wchoose([1,2],[1-randomOctave,randomOctave]);
 
+						var stepRate = step[1] * (2 ** (semitones / 12)); 
+						var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
+						var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
+						var rate = (stepRate * fithFactor) * octaveFactor;
 
 						var reverse = wchoose([step[2], 1], [1 - randomReverse, randomReverse]);
-						var amp = step[3] + (rrand(0, 1) * randomAmp);
+						var amp = step[3] + (rrand(-1, 1) * randomAmp);
+						
 						var pan = step[4] + (rrand(-1, 1) * randomPan);
 						var active = step[5];
 						var fade = if(direction == 0, 0.005, 0.005);
@@ -161,23 +140,22 @@ Engine_Rounds : CroneEngine {
 						activeStep = stepIndex;
 						trigBus.set(1);
 
-
-						simpleBuffer = Synth.new(\simpleBufferSynth, [
-								\bufnum, buffer,
-								\startSegment, startSegment,
-								\endSegment, startSegment + 1,
-								\numSegments, numSegments,
-								\amp, amp,
-								\rate, rate,
-								\pan, pan,
-								\out, context.out_b.index,
-								\trigIn, trigBus.index,
-								\useEnv, useEnv,
-								\attack, attackR,
-								\release, releaseR,
-								\reverse, reverse,
-								\vol, 1,
-						], target: pg);
+						// simpleBuffer = Synth.new(\simpleBufferSynth, [
+						// 		\bufnum, buffer,
+						// 		\startSegment, startSegment,
+						// 		\endSegment, startSegment + 1,
+						// 		\numSegments, numSegments,
+						// 		\amp, amp.clip(0, 1),
+						// 		\rate, rate,
+						// 		\pan, pan,
+						// 		\out, context.out_b.index,
+						// 		\trigIn, trigBus.index,
+						// 		\useEnv, useEnv,
+						// 		\attack, attackR,
+						// 		\release, releaseR,
+						// 		\reverse, reverse,
+						// 		\vol, 1,
+						// ], target: pg);
 						
 						
 						stepLength = if(useSampleLength == 1, segmentLength, stepTime);
@@ -249,19 +227,20 @@ Engine_Rounds : CroneEngine {
     
 		this.addCommand(\vol, "f", { |msg|
 			var vol = msg[1];
-			// simpleBuffer.set(\vol, vol);
+		});
+
+		this.addCommand(\semitones, "f", { |msg|
+			semitones = msg[1];
 		});
 
 		// Attack
 		this.addCommand(\attack, "f", { |msg|
 			attack = msg[1];
-			// simpleBuffer.set(\attack, attack);
 		});
 
 		// Release
 		this.addCommand(\release, "f", { |msg|
 			release = msg[1];
-			// simpleBuffer.set(\release, release);
 		});
 
 		this.addCommand(\useEnv, "f", { |msg|
@@ -272,6 +251,8 @@ Engine_Rounds : CroneEngine {
 			var newDirection = msg[1] - 1;
 			direction = newDirection;
 		});
+
+
 
 		this.addCommand(\steps, "i", { |msg|
 			var newNumSteps = msg[1];
@@ -326,6 +307,42 @@ Engine_Rounds : CroneEngine {
 			randomRelease = newRandomRelease;
 		});
 
+		this.addCommand(\play, "ifffi", { |msg|
+
+			var startSegment = msg[1] - 1;
+			var amp = msg[2] + (rrand(-1, 1) * randomAmp);
+			var pan = msg[4] + (rrand(-1, 1) * randomPan);
+			var reverse = wchoose([msg[5], 1], [1 - randomReverse, randomReverse]);
+
+			var attackR = attack + (rrand(0.001, 1) * randomAttack);
+			var releaseR = release + (rrand(0.001, 3) * randomRelease);
+
+			var stepRate = msg[3] * (2 ** (semitones / 12));
+			var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
+			var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
+			var rate = (stepRate * fithFactor) * octaveFactor;
+
+			
+
+			simpleBuffer = Synth.new(\simpleBufferSynth, [
+								\bufnum, buffer,
+								\startSegment, startSegment,
+								\endSegment, startSegment + 1,
+								\numSegments, numSegments,
+								\amp, amp.clip(0, 1),
+								\rate, rate,
+								\pan, pan,
+								\out, context.out_b.index,
+								\trigIn, trigBus.index,
+								\useEnv, useEnv,
+								\attack, attackR,
+								\release, releaseR,
+								\reverse, reverse,
+								\vol, 1,
+						], target: pg);
+		});	
+			
+
 
 
 
@@ -333,8 +350,8 @@ Engine_Rounds : CroneEngine {
 		this.addCommand(\start, "", { |msg|
 			"Attempting to start voice".postln;
 			if (routine.isPlaying.not) {
+				routine.stop;
 				routine.reset;
-				// simpleBuffer.set(\vol, 1);
 				routine.play;
 				context.server.sync;
 				"Voice started".postln;
@@ -347,7 +364,6 @@ Engine_Rounds : CroneEngine {
         // Command to stop the routine
         this.addCommand(\stop, "", { |msg|
 			"Attempting to stop voice".postln;
-			// simpleBuffer.set(\vol, 0);
             routine.stop;
 			context.server.sync;
         });

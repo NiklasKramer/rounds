@@ -6,6 +6,20 @@ local g = grid.connect()
 steps = 16
 active_step = 0
 sync = 0
+clock_id = 0
+
+local division_factors = {
+  [1] = 1 / 32,
+  [2] = 1 / 16,
+  [3] = 1 / 8,
+  [4] = 1 / 4,
+  [5] = 1 / 2,
+  [6] = 1,
+}
+
+
+
+-- GRID UI
 
 function generate_cubes()
   local positions = {}
@@ -26,81 +40,6 @@ function generate_cubes()
 end
 
 local step_positions = generate_cubes()
-
-function grid_key(x, y, z)
-  if steps == 64 then
-    for i = 1, steps do
-      local pos = step_positions[i]
-      if pos[1] == x and pos[2] == y then
-        if z == 1 then
-          local current_value = params:get("active_" .. i)
-          params:set("active_" .. i, 1 - current_value)
-        end
-      end
-    end
-  elseif steps == 32 then
-    local step_order_32 = { 1, 3, 2, 4, 5, 7, 6, 8, 9, 11, 10, 12, 13, 15, 14, 16, 17, 19, 18, 20, 21, 23, 22, 24, 25, 27, 26, 28, 29, 31, 30, 32 }
-    for i = 1, steps do
-      local step_index = step_order_32[i]
-      local pos1 = step_positions[(step_index * 2) - 1]
-      local pos2 = step_positions[(step_index * 2)]
-      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y) then
-        if z == 1 then
-          local current_value = params:get("active_" .. step_index)
-          params:set("active_" .. step_index, 1 - current_value)
-        end
-      end
-    end
-  elseif steps == 16 then
-    for i = 1, steps do
-      local pos1 = step_positions[(i * 4) - 3]
-      local pos2 = step_positions[(i * 4) - 2]
-      local pos3 = step_positions[(i * 4) - 1]
-      local pos4 = step_positions[i * 4]
-      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y)
-          or (pos3[1] == x and pos3[2] == y) or (pos4[1] == x and pos4[2] == y) then
-        if z == 1 then
-          local current_value = params:get("active_" .. i)
-          params:set("active_" .. i, 1 - current_value)
-        end
-      end
-    end
-  elseif steps == 8 then
-    for i = 1, steps do
-      local pos1 = step_positions[(i * 8) - 7]
-      local pos2 = step_positions[(i * 8) - 6]
-      local pos3 = step_positions[(i * 8) - 5]
-      local pos4 = step_positions[(i * 8) - 4]
-      local pos5 = step_positions[(i * 8) - 3]
-      local pos6 = step_positions[(i * 8) - 2]
-      local pos7 = step_positions[(i * 8) - 1]
-      local pos8 = step_positions[i * 8]
-      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y)
-          or (pos3[1] == x and pos3[2] == y) or (pos4[1] == x and pos4[2] == y)
-          or (pos5[1] == x and pos5[2] == y) or (pos6[1] == x and pos6[2] == y)
-          or (pos7[1] == x and pos7[2] == y) or (pos8[1] == x and pos8[2] == y) then
-        if z == 1 then
-          local current_value = params:get("active_" .. i)
-          params:set("active_" .. i, 1 - current_value)
-        end
-      end
-    end
-  elseif steps == 4 then
-    for i = 1, steps do
-      for j = 0, 15 do
-        local pos = step_positions[(i * 16) - j]
-        if pos[1] == x and pos[2] == y then
-          if z == 1 then
-            local current_value = params:get("active_" .. i)
-            params:set("active_" .. i, 1 - current_value)
-          end
-        end
-      end
-    end
-  end
-
-  grid_redraw()
-end
 
 function grid_redraw()
   g:all(0)
@@ -206,6 +145,83 @@ function grid_redraw()
   g:refresh()
 end
 
+function grid_key(x, y, z)
+  if steps == 64 then
+    for i = 1, steps do
+      local pos = step_positions[i]
+      if pos[1] == x and pos[2] == y then
+        if z == 1 then
+          local current_value = params:get("active_" .. i)
+          params:set("active_" .. i, 1 - current_value)
+        end
+      end
+    end
+  elseif steps == 32 then
+    local step_order_32 = { 1, 3, 2, 4, 5, 7, 6, 8, 9, 11, 10, 12, 13, 15, 14, 16, 17, 19, 18, 20, 21, 23, 22, 24, 25, 27, 26, 28, 29, 31, 30, 32 }
+    for i = 1, steps do
+      local step_index = step_order_32[i]
+      local pos1 = step_positions[(step_index * 2) - 1]
+      local pos2 = step_positions[(step_index * 2)]
+      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y) then
+        if z == 1 then
+          local current_value = params:get("active_" .. step_index)
+          params:set("active_" .. step_index, 1 - current_value)
+        end
+      end
+    end
+  elseif steps == 16 then
+    for i = 1, steps do
+      local pos1 = step_positions[(i * 4) - 3]
+      local pos2 = step_positions[(i * 4) - 2]
+      local pos3 = step_positions[(i * 4) - 1]
+      local pos4 = step_positions[i * 4]
+      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y)
+          or (pos3[1] == x and pos3[2] == y) or (pos4[1] == x and pos4[2] == y) then
+        if z == 1 then
+          local current_value = params:get("active_" .. i)
+          params:set("active_" .. i, 1 - current_value)
+        end
+      end
+    end
+  elseif steps == 8 then
+    for i = 1, steps do
+      local pos1 = step_positions[(i * 8) - 7]
+      local pos2 = step_positions[(i * 8) - 6]
+      local pos3 = step_positions[(i * 8) - 5]
+      local pos4 = step_positions[(i * 8) - 4]
+      local pos5 = step_positions[(i * 8) - 3]
+      local pos6 = step_positions[(i * 8) - 2]
+      local pos7 = step_positions[(i * 8) - 1]
+      local pos8 = step_positions[i * 8]
+      if (pos1[1] == x and pos1[2] == y) or (pos2[1] == x and pos2[2] == y)
+          or (pos3[1] == x and pos3[2] == y) or (pos4[1] == x and pos4[2] == y)
+          or (pos5[1] == x and pos5[2] == y) or (pos6[1] == x and pos6[2] == y)
+          or (pos7[1] == x and pos7[2] == y) or (pos8[1] == x and pos8[2] == y) then
+        if z == 1 then
+          local current_value = params:get("active_" .. i)
+          params:set("active_" .. i, 1 - current_value)
+        end
+      end
+    end
+  elseif steps == 4 then
+    for i = 1, steps do
+      for j = 0, 15 do
+        local pos = step_positions[(i * 16) - j]
+        if pos[1] == x and pos[2] == y then
+          if z == 1 then
+            local current_value = params:get("active_" .. i)
+            params:set("active_" .. i, 1 - current_value)
+          end
+        end
+      end
+    end
+  end
+
+  grid_redraw()
+end
+
+-- INIT
+
 function init()
   init_polls()
   init_params()
@@ -222,33 +238,14 @@ function init_params()
   params:add_binary("play/stop", "play/stop", "toggle", 0)
   params:set_action("play/stop", function(value)
     if value == 1 then
-      clock.run(function()
-        if sync == 1 then
-          clock.sync(1 / 4)
-        end
-        engine.start()
-      end)
-    elseif value == 0 then
-      clock.run(function()
-        if sync == 1 then
-          clock.sync(1 / 4)
-        end
-        engine.stop()
-      end)
+      print("play")
+      clock_id = clock.run(start_sequence)
+    else
+      clock.cancel(clock_id)
     end
   end)
 
-  params:add_binary("sync", "sync", "toggle", 0)
-  params:set_action("sync", function(value)
-    engine.useSampleLength(1 - value)
-    sync = value
-    update_step_time()
-  end)
-
-  params:add_option("step_division", "Step Division", { "1/32", "1/16", "1/8", "1/4", "1/2", "1" }, 4)
-  params:set_action("step_division", function(value)
-    update_step_time()
-  end)
+  params:add_option("step_division", "Step Division", division_factors, 4)
 
   params:add_option("steps", "steps", { 4, 8, 16, 32, 64 }, 3)
   params:set_action("steps", function(value)
@@ -264,6 +261,13 @@ function init_params()
       steps = 64
     end
     engine.steps(steps)
+  end)
+
+
+
+  params:add_number("semitones", "semitones", -24, 24, 0)
+  params:set_action("semitones", function(value)
+    engine.semitones(value)
   end)
 
   params:add_option("direction", "playback direction", { "forward", "reverse", "random" }, 1)
@@ -365,15 +369,11 @@ function init_steps_as_params()
 end
 
 function init_polls()
-  local phase_poll = poll.set('position', function(pos)
-    active_step = pos + 1
-  end)
-  phase_poll.time = 0.1
-  phase_poll:start()
-
   metro_grid_refresh = metro.init(function(stage) grid_redraw() end, 1 / 40)
   metro_grid_refresh:start()
 end
+
+-- CLOCK
 
 function clock.tempo_change_handler()
   update_step_time()
@@ -389,19 +389,42 @@ function clock.transport.stop()
   params:set("play/stop", 0)
 end
 
-function update_step_time()
-  local division = params:get("step_division")
+function start_sequence()
+  print("start_sequence")
+  local i = 1
+  while true do
+    -- get direction from params
+    local direction = params:get("direction")
+    local index = 0
 
-  local division_factors = {
-    [1] = 1 / 32,
-    [2] = 1 / 16,
-    [3] = 1 / 8,
-    [4] = 1 / 4,
-    [5] = 1 / 2,
-    [6] = 1,
-  }
+    if direction == 1 then
+      index = i
+    elseif direction == 2 then
+      index = steps - i + 1
+    elseif direction == 3 then
+      index = math.random(1, steps)
+    end
 
-  local beat_sec = clock.get_beat_sec()
-  local step_time = beat_sec * 4 * division_factors[division]
-  engine.stepTime(step_time)
+    local start_segment = params:get("segment" .. index)
+    local rate = params:get("rate" .. index)
+    local reverse = params:get("reverse" .. index)
+    local amp = params:get("amp" .. index)
+    local pan = params:get("pan" .. index)
+    engine.play(start_segment, amp, rate, pan, reverse)
+    local step_devision = params:get("step_division")
+    print("step_devision: " .. step_devision)
+    print(division_factors[step_devision] * 4)
+
+    print()
+    clock.sync(division_factors[step_devision] * 4)
+
+    i = i + 1
+    if i > steps then
+      i = 1
+    end
+
+
+    active_step = index
+    print("step: " .. index)
+  end
 end
