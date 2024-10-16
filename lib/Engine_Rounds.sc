@@ -1,5 +1,5 @@
 Engine_Rounds : CroneEngine {
-    var pg, buffer,path="", routine, stepInfo, numSteps, numSegments, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, direction, yieldTime, useSampleLength=1, stepTime = 0.1, stepLength,
+    var pg, buffer,path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
 	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.5, useEnv = 0, semitones=0;
 
     *new { arg context, doneCallback;
@@ -40,16 +40,10 @@ Engine_Rounds : CroneEngine {
 	}
 
 
-    // Allocate buffer and initialize routine
+
     alloc {
-        // Allocate stereo buffer for the single voice
-        buffer = Buffer.alloc(context.server, context.server.sampleRate * 1, 2);
-		trigBus  = Bus.control(context.server, 1);
-		// Initialize active step
-		activeStep = 0;
-        // ParGroup for handling the voice
-        pg = ParGroup.head(context.xg);
-		
+		buffer = Buffer.alloc(context.server, context.server.sampleRate * 1, 2);
+
 		SynthDef(\simpleBufferSynth, {
 			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse=0, pan = 0, out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5,
 			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 0|
@@ -92,89 +86,70 @@ Engine_Rounds : CroneEngine {
 			Out.ar(out, bufplay * amp * vol * envGen);
 		}).add;
 
-
-
-
 		
-		// Number of steps and segments
+		SynthDef(\warpDelay, { |out=0, in=32, delay=0.2, time=10, hpf=330, lpf=8200, w_rate=0.667, w_depth=0.00027, rotate=0.0, mix=0.2, i_max_del=8, lagTime=0.1|
+			var inputSignal, modulation, delayedSignal, tapeSignal ,feedbackSignal, feedback, smoothedDelay, smoothedTime;
 
-		
-		numSteps = 64;
-        numSegments = 16;
-        // Initialize stepInfo array for the single voice
-        stepInfo = Array.fill(numSteps, { |i| [i, 1, 0 ,1, 0, 1] });  // Default values: [startSegment, rate, reverse, amp, pan, active]
-        segmentLength = buffer.duration / numSegments;
+			inputSignal = In.ar(in, 2); // Input from bus
 
-		direction = 0;
-		yieldTime = 0.1;
+			smoothedDelay = Lag.kr(delay, lagTime);
+			smoothedTime = Lag.kr(time, lagTime);
 
-        // Create a routine for the single voice
-        routine = Task({
-            
-			"Segment length: %".format(segmentLength).postln;
-			"STEP INFO: %".format(stepInfo).postln;
-			
+			feedback = exp(log(0.001) * (smoothedDelay / smoothedTime));
+			modulation = LFPar.kr(w_rate, mul: w_depth);
 
-            loop {
-                numSegments.do { |i|
-                    context.server.bind({
-						var options = [i, numSegments - i - 1, rrand(0, numSegments - 1)];
-						var stepIndex = options[direction];
-						var step = stepInfo[stepIndex % stepInfo.size];
-						var startSegment = step[0];
+			feedbackSignal = LocalIn.ar(2);
+			feedbackSignal = Rotate2.ar(feedbackSignal[0], feedbackSignal[1], rotate).softclip;
 
-						var stepRate = step[1] * (2 ** (semitones / 12)); 
-						var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
-						var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
-						var rate = (stepRate * fithFactor) * octaveFactor;
+			delayedSignal = DelayL.ar(Limiter.ar(Mix([feedbackSignal * feedback, inputSignal]), 0.99, 0.01), i_max_del, smoothedDelay + modulation);
+			delayedSignal = LPF.ar(HPF.ar(delayedSignal, hpf), lpf);
 
-						var reverse = wchoose([step[2], 1], [1 - randomReverse, randomReverse]);
-						var amp = step[3] + (rrand(-1, 1) * randomAmp);
-						
-						var pan = step[4] + (rrand(-1, 1) * randomPan);
-						var active = step[5];
-						var fade = if(direction == 0, 0.005, 0.005);
-						var attackR = attack + (rrand(0.001, 1) * randomAttack);
-						var releaseR = release + (rrand(0.001, 3) * randomRelease);
+			tapeSignal = AnalogTape.ar(delayedSignal);
 
-						activeStep = stepIndex;
-						trigBus.set(1);
+			LocalOut.ar(tapeSignal);
 
-						// simpleBuffer = Synth.new(\simpleBufferSynth, [
-						// 		\bufnum, buffer,
-						// 		\startSegment, startSegment,
-						// 		\endSegment, startSegment + 1,
-						// 		\numSegments, numSegments,
-						// 		\amp, amp.clip(0, 1),
-						// 		\rate, rate,
-						// 		\pan, pan,
-						// 		\out, context.out_b.index,
-						// 		\trigIn, trigBus.index,
-						// 		\useEnv, useEnv,
-						// 		\attack, attackR,
-						// 		\release, releaseR,
-						// 		\reverse, reverse,
-						// 		\vol, 1,
-						// ], target: pg);
-						
-						
-						stepLength = if(useSampleLength == 1, segmentLength, stepTime);
-						yieldTime = if(active == 1, stepLength, 0);
-
-						
-					});
-						yieldTime.yield;
-					
-                };
-            }
-        });
+			Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
+		}).add;
 
 		context.server.sync;
 
 
+		// Initialize active step
+		activeStep = 0;
+        // ParGroup for handling the voice
+        pg = ParGroup.head(context.xg);
+
+		trigBus  = Bus.control(context.server, 1);
+		delayBus = Bus.audio(context.server, 2);
+
+	
+		// Number of steps and segments
+		numSteps = 64;
+        numSegments = 16;
+        // Initialize stepInfo array for the single voice
+        segmentLength = buffer.duration / numSegments;
 
 
-        // Command to set buffer path
+		warpDelay = Synth.new(\warpDelay, [
+			\in, delayBus, // Take input from the audio bus
+			\out, context.out_b.index, // Send output to the main output
+			\delay, 0.2, // Delay time (you can adjust as needed)
+			\time, 10,
+			\hpf, 330,
+			\lpf, 8200,
+			\w_rate, 0.667,
+			\w_depth, 0.00027,
+			\rotate, 0.0,
+			\mix, 0.2,
+		], target: context.xg);
+
+
+		context.server.sync;
+
+		// ============================================================
+		// Commands
+		// ============================================================
+
         this.addCommand(\bufferPath, "s", { |msg|
 			path = msg[1];
 			this.loadBuffer();
@@ -185,45 +160,6 @@ Engine_Rounds : CroneEngine {
 				"Buffer not loaded correctly or file not found.".postln;
 			}
 		});
-
-        // Command to set rate
-        this.addCommand(\rate, "if", { |msg|
-			var stepIndex = msg[1]-1;
-            var newRate = msg[2];
-            stepInfo[stepIndex][1] = newRate;
-        });
-
-		this.addCommand(\reverse, "if", { |msg|
-			var stepIndex = msg[1]-1;
-			var newReverse = msg[2];
-			stepInfo[stepIndex][2] = newReverse;
-		});
-
-		this.addCommand(\segment, "if", { |msg|
-			var stepIndex = msg[1] - 1;
-			var newSegment = msg[2] - 1;
-			stepInfo[stepIndex][0] = newSegment;
-		});
-
-		// Command to set amp
-		this.addCommand(\amp, "if", { |msg|
-			var stepIndex = msg[1] - 1;
-			var newAmp = msg[2];	
-			stepInfo[stepIndex][3] = newAmp;});
-
-		// Command to set pan
-		this.addCommand(\pan, "if", { |msg|
-			var stepIndex = msg[1] - 1;
-			var newPan = msg[2];
-			stepInfo[stepIndex][4] = newPan;
-		});
-
-		this.addCommand(\active, "if", { |msg|
-			var stepIndex = msg[1] - 1;
-			var newActive = msg[2];
-			stepInfo[stepIndex][5] = newActive;
-		});
-
     
 		this.addCommand(\vol, "f", { |msg|
 			var vol = msg[1];
@@ -247,13 +183,6 @@ Engine_Rounds : CroneEngine {
 			 useEnv = msg[1];
 		});
 
-		this.addCommand(\direction, "f", { |msg|
-			var newDirection = msg[1] - 1;
-			direction = newDirection;
-		});
-
-
-
 		this.addCommand(\steps, "i", { |msg|
 			var newNumSteps = msg[1];
 			numSegments = newNumSteps;
@@ -264,11 +193,6 @@ Engine_Rounds : CroneEngine {
 		this.addCommand(\useSampleLength, "f", { |msg|
 			var newUseSampleLength = msg[1];
 			useSampleLength = newUseSampleLength;
-		});
-
-		this.addCommand(\stepTime, "f", { |msg|
-			var newStepTime = msg[1];
-			stepTime = newStepTime;
 		});
 
 		// Random
@@ -325,53 +249,58 @@ Engine_Rounds : CroneEngine {
 			
 
 			simpleBuffer = Synth.new(\simpleBufferSynth, [
-								\bufnum, buffer,
-								\startSegment, startSegment,
-								\endSegment, startSegment + 1,
-								\numSegments, numSegments,
-								\amp, amp.clip(0, 1),
-								\rate, rate,
-								\pan, pan,
-								\out, context.out_b.index,
-								\trigIn, trigBus.index,
-								\useEnv, useEnv,
-								\attack, attackR,
-								\release, releaseR,
-								\reverse, reverse,
-								\vol, 1,
-						], target: pg);
+				\bufnum, buffer,
+				\startSegment, startSegment,
+				\endSegment, startSegment + 1,
+				\numSegments, numSegments,
+				\amp, amp.clip(0, 1),
+				\rate, rate,
+				\pan, pan,
+				\out, delayBus,
+				\trigIn, trigBus.index,
+				\useEnv, useEnv,
+				\attack, attackR,
+				\release, releaseR,
+				\reverse, reverse,
+				\vol, 1,
+			], target: context.xg);
 		});	
-			
 
-
-
-
-        // Command to start the routine
-		this.addCommand(\start, "", { |msg|
-			"Attempting to start voice".postln;
-			if (routine.isPlaying.not) {
-				routine.stop;
-				routine.reset;
-				routine.play;
-				context.server.sync;
-				"Voice started".postln;
-			} {
-				"Voice is already playing".postln;
-			};
+		// Delay Commands
+		this.addCommand(\delay, "f", { |msg|
+			warpDelay.set(\delay, msg[1]);
 		});
 
+		this.addCommand(\time, "f", { |msg|
+			warpDelay.set(\time, msg[1]);
+		});
 
-        // Command to stop the routine
-        this.addCommand(\stop, "", { |msg|
-			"Attempting to stop voice".postln;
-            routine.stop;
-			context.server.sync;
-        });
+		this.addCommand(\hpf, "f", { |msg|
+			warpDelay.set(\hpf, msg[1]);
+		});
 
-		this.addPoll(("position"), {
-			var val = activeStep;
+		this.addCommand(\lpf, "f", { |msg|
+			warpDelay.set(\lpf, msg[1]);
+		});
 
-			val
+		this.addCommand(\w_rate, "f", { |msg|
+			warpDelay.set(\w_rate, msg[1]);
+		});
+
+		this.addCommand(\w_depth, "f", { |msg|
+			warpDelay.set(\w_depth, msg[1]/100);
+		});
+
+		this.addCommand(\rotate, "f", { |msg|
+			warpDelay.set(\rotate, msg[1]);
+		});
+
+		this.addCommand(\mix, "f", { |msg|
+			warpDelay.set(\mix, msg[1]);
+		});
+
+		this.addCommand(\lagTime, "f", { |msg|
+			warpDelay.set(\lagTime, msg[1]);
 		});
 
     }
@@ -379,8 +308,8 @@ Engine_Rounds : CroneEngine {
     // Free resources
     free {
         buffer.free;
-        routine.stop;
         pg.free;
+		warpDelay.free;
     }
 }
 
