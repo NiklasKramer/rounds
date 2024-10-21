@@ -1,6 +1,7 @@
 Engine_Rounds : CroneEngine {
     var pg, buffer,path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
-	randomOctave = 0, randomPan = 0, randomAmp = 0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, release=0.5, useEnv = 0, semitones=0;
+	randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
+	release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -45,10 +46,11 @@ Engine_Rounds : CroneEngine {
 		buffer = Buffer.alloc(context.server, context.server.sampleRate * 1, 2);
 
 		SynthDef(\simpleBufferSynth, {
-			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse=0, pan = 0, out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5,
-			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 0|
+			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, hipassFreq = 1, 
+			out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
+			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1|
 			
-			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, safetyEnvGen;
+			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, lpEnvGen, hpEnvGen;
 
 			segmentSize = BufDur.kr(bufnum) / numSegments;
 			phasorStart = startSegment / numSegments * BufFrames.kr(bufnum);
@@ -67,28 +69,40 @@ Engine_Rounds : CroneEngine {
 				start: start,  
 				end: end,
 				resetPos: phasorStart
-			
 			);
 
 			bufplay = BufRd.ar(2, bufnum, phase, loop: 0);
 
 			amp = Lag.kr(amp, ampLag);     
-			pan = Lag.kr(pan, panLag);     
-
-			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
-			
+			pan = Lag.kr(pan, panLag);  
 			gate = Impulse.ar(0);
 
-			percEnvGen = EnvGen.ar(Env.perc((attack + fade), release),gate: gate, doneAction: Done.freeSelf);
-			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]),gate:gate, doneAction: Done.freeSelf);
-			envGen = Select.ar(useEnv, [fadeEnvGen,percEnvGen]);
+			// Main amplitude envelope
+			percEnvGen = EnvGen.ar(Env.perc((attack + fade), release), gate: gate, doneAction: Done.freeSelf);
+
+			// Envelope modulating low-pass filter
+			lpEnvGen = EnvGen.ar(Env.perc(attack, release), gate: gate) * lowpassEnvStrength;
+			lowpassFreq = lowpassFreq + (lpEnvGen * (20000 - lowpassFreq));  // Modulate within the remaining range
+
+			// Envelope modulating high-pass filter
+			hpEnvGen = EnvGen.ar(Env.perc(attack, release), gate: gate) * hipassEnvStrength;
+			hipassFreq = hipassFreq + (hpEnvGen * (hipassFreq - 1));  // Modulate within the remaining range
+
+			// Apply filters
+			bufplay = RLPF.ar(bufplay, lowpassFreq.clip(1, 20000));
+			bufplay = RHPF.ar(bufplay, hipassFreq.clip(1, 20000));
+
+			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
+
+			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]), gate: gate, doneAction: Done.freeSelf);
+			envGen = Select.ar(useEnv, [fadeEnvGen, percEnvGen]);
 
 			Out.ar(out, bufplay * amp * vol * envGen);
 		}).add;
 
 		
 		SynthDef(\warpDelay, { |out=0, in=32, delay=0.2, time=10, hpf=330, lpf=8200, w_rate=0.667, w_depth=0.00027, rotate=0.0, mix=0.2, i_max_del=8, lagTime=0.1|
-			var inputSignal, modulation, delayedSignal, tapeSignal ,feedbackSignal, feedback, smoothedDelay, smoothedTime;
+			var inputSignal, modulation, delayedSignal ,feedbackSignal, feedback, smoothedDelay, smoothedTime;
 
 			inputSignal = In.ar(in, 2); // Input from bus
 
@@ -104,10 +118,8 @@ Engine_Rounds : CroneEngine {
 			delayedSignal = DelayL.ar(Limiter.ar(Mix([feedbackSignal * feedback, inputSignal]), 0.99, 0.01), i_max_del, smoothedDelay + modulation);
 			delayedSignal = LPF.ar(HPF.ar(delayedSignal, hpf), lpf);
 
-			tapeSignal = AnalogTape.ar(delayedSignal);
-
-			LocalOut.ar(tapeSignal);
-
+			LocalOut.ar(delayedSignal);
+			
 			Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
 		}).add;
 
@@ -131,9 +143,9 @@ Engine_Rounds : CroneEngine {
 
 
 		warpDelay = Synth.new(\warpDelay, [
-			\in, delayBus, // Take input from the audio bus
-			\out, context.out_b.index, // Send output to the main output
-			\delay, 0.2, // Delay time (you can adjust as needed)
+			\in, delayBus, 
+			\out, context.out_b.index, 
+			\delay, 0.2, 
 			\time, 10,
 			\hpf, 330,
 			\lpf, 8200,
@@ -169,12 +181,20 @@ Engine_Rounds : CroneEngine {
 			semitones = msg[1];
 		});
 
-		// Attack
+		this.addCommand(\lowpassFreq, "f", { |msg|
+			var newLowpassFreq = msg[1];
+			lowpassFreq = newLowpassFreq;
+		});
+
+		this.addCommand(\highpassFreq, "f", { |msg|
+			var newHighpassFreq = msg[1];
+			hipassFreq = newHighpassFreq;
+		});
+
 		this.addCommand(\attack, "f", { |msg|
 			attack = msg[1];
 		});
 
-		// Release
 		this.addCommand(\release, "f", { |msg|
 			release = msg[1];
 		});
@@ -231,6 +251,26 @@ Engine_Rounds : CroneEngine {
 			randomRelease = newRandomRelease;
 		});
 
+		this.addCommand(\randomLowPass, "f", { |msg|
+			var newRandomLowPass = msg[1];
+			randomLowPass = newRandomLowPass;
+		});
+
+		this.addCommand(\randomHiPass, "f", { |msg|
+			var newRandomHiPass = msg[1];
+			randomHiPass = newRandomHiPass;
+		});
+
+		this.addCommand(\lowpassEnvStrength, "f", { |msg|
+			var newLowpassEnvStrength = msg[1];
+			lowpassEnvStrength = newLowpassEnvStrength;
+		});
+
+		this.addCommand(\hipassEnvStrength, "f", { |msg|
+			var newHipassEnvStrength = msg[1];
+			hipassEnvStrength = newHipassEnvStrength;
+		});
+
 		this.addCommand(\play, "ifffi", { |msg|
 
 			var startSegment = msg[1] - 1;
@@ -245,6 +285,8 @@ Engine_Rounds : CroneEngine {
 			var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
 			var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
 			var rate = (stepRate * fithFactor) * octaveFactor;
+			var lowpassFreqFactor = lowpassFreq + (rrand(-1, 1) * randomLowPass * 10000);
+			var hipassFreqFactor = hipassFreq + (rrand(-1, 1) * randomHiPass * 10000);
 
 			
 
@@ -262,6 +304,10 @@ Engine_Rounds : CroneEngine {
 				\attack, attackR,
 				\release, releaseR,
 				\reverse, reverse,
+				\lowpassFreq, lowpassFreqFactor.clip(1, 20000),
+				\hipassFreq, hipassFreqFactor.clip(1, 20000),
+				\lowpassEnvStrength, lowpassEnvStrength,
+				\hipassEnvStrength, hipassEnvStrength,
 				\vol, 1,
 			], target: context.xg);
 		});	
