@@ -240,8 +240,11 @@ function redraw()
   if fileselect_active then return end
   screen.clear()
 
+  -- Draw the screen indicator for all screens
+  draw_screen_indicator()
+
+  -- Draw content based on the selected screen
   if screen_mode == 1 then
-    draw_screen_indicator()
     if selected_voice_screen == 1 then
       draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -256,7 +259,6 @@ function redraw()
   elseif screen_mode == 2 then
     draw_delay_screen()
   end
-
 
   screen.update()
 end
@@ -344,7 +346,6 @@ function draw_delay_screen()
 end
 
 function draw_random_pan_amp_screen()
-  screen.clear()
   local num_particles = 10
   local particle_radius = 1.5
   local particle_dispersion = screen_h * 0.6
@@ -382,12 +383,9 @@ function draw_random_pan_amp_screen()
     screen.circle(amp_center_x, center_y, ripple_radius)
     screen.stroke()
   end
-
-  screen.update()
 end
 
 function draw_random_fifth_octave_screen()
-  screen.clear()
   local arc_center_x = screen_w / 2
   local arc_center_y = screen_h / 2
   local fifth_arc_radius_min = 10
@@ -432,8 +430,6 @@ function draw_random_fifth_octave_screen()
 
   screen.rect(bar_x_right, bar_y - bar_height / 2, bar_width, bar_height)
   screen.fill()
-
-  screen.update()
 end
 
 function draw_filter_screen()
