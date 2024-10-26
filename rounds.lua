@@ -28,95 +28,44 @@
 
 engine.name = 'Rounds'
 local g = grid.connect()
-
 local EnvGraph = require "envgraph"
 local FilterGraph = require "filtergraph"
 local fileselect = require('fileselect')
+utils = include('lib/utils')
 
-local env_graph
-local filter_graph
-local selected_voice_screen = 1
-local number_of_screens = 5
-
-
-
-local shift = false
-
-
-local steps = 16
-local active_step = 0
-local clock_id = 0
-local selected_file_path = 'none'
-local fileselect_active = false
-
-local screen_w = 128
-local screen_h = 64
-local outer_circle_radius = 28
-local inner_circle_radius = 18
-local circle_x = screen_w / 2
-local circle_y = screen_h / 2
+local screen_w, screen_h = 128, 64
+local circle_x, circle_y = screen_w / 2, screen_h / 2
+local outer_circle_radius, inner_circle_radius = 28, 18
 local direction_symbols = { ">", "<", "~" }
 
+local selected_voice_screen = 1
+local number_of_screens = 5
+local screen_mode = 1
+local shift = false
+local fileselect_active = false
+local selected_file_path = 'none'
 
-
-local patterns = {
-  { 1 },
-  { 1, 0, 1 },
-  { 1, 0, 1, 0 },
-  { 1, 1, 0, 1 },
-  { 1, 1, 1, 0 },
-  { 1, 1, 0, 0, 1 },
-  { 1, 1, 0, 1, 0 },
-  { 1, 1, 0, 1, 0, 0 },
-  { 1, 1, 0, 1, 0, 1 },
-  { 1, 1, 0, 1, 0, 1, 0 },
-  { 1, 0, 1, 0, 0, 1, 1 },
-  { 1, 1, 1, 1, 0, 1, 0, 1 },
-  { 1, 0, 1, 1, 0, 1, 0, 1 },
-  { 1, 1, 0, 0, 1, 1, 0, 1 },
-  { 1, 1, 1, 0, 1, 0, 1, 1 },
-  { 1, 0, 0, 1, 1, 0, 1, 0 },
-  { 1, 1, 0, 1, 1, 1, 0, 1 },
-  { 1, 0, 1, 1, 0, 1, 1, 0 },
-  { 1, 1, 0, 0, 1, 0, 1, 0 },
-  { 1, 1, 0, 1, 1, 0, 1, 1 },
-  { 1, 1, 1, 0, 0, 1, 0, 1 },
-  { 1, 0, 0, 1, 1, 1, 0, 1 },
-  { 1, 0, 0, 1, 1, 0, 1, 1 },
-  { 1, 1, 1, 1, 0, 1, 1, 0 },
-  { 1, 0, 0, 0, 0, 1, 1, 0 },
-  { 1, 0, 1, 0, 0, 1, 1, 0, 1 },
-  { 1, 0, 1, 0, 1, 1, 1, 0, 1 },
-  { 1, 0, 0, 1, 0, 1, 0, 1, 1 },
-  { 1, 1, 0, 1, 0, 1, 0, 1, 1 },
-  { 1, 1, 0, 1, 0, 1, 1, 0, 1 },
-  { 1, 0, 1, 1, 1, 0, 1, 0, 0, 0 },
-  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1 },
-  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0 },
-  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1 },
-  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 },
-  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 }
-}
-
+-- Step and Pattern Configuration
+local steps = 16
+local active_step = 0
 local active_pattern_step = 1
 
-local division_factors = {
-  [1] = 1,
-  [2] = 1 / 2,
-  [3] = 1 / 4,
-  [4] = 1 / 8,
-  [5] = 1 / 16,
-  [6] = 1 / 32,
-}
+-- Timing and Clock
+local clock_id = 0
+
+-- Envelope and Filter Graphics
+local env_graph
+local filter_graph
+
+
+
 
 function init()
   init_polls()
   init_params()
 
-
   init_env_graph()
   init_filter_graph()
-
 
   update_delay_time()
 
@@ -132,6 +81,7 @@ end
 
 function init_params()
   params:add_separator("Rounds")
+  params:add_group("Global", 7)
   params:add_file("sample", "Sample")
   params:set_action("sample", function(file) engine.bufferPath(file) end)
 
@@ -144,7 +94,7 @@ function init_params()
     end
   end)
 
-  params:add_option("step_division", "Step Division", division_factors, 4)
+  params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
   params:add_option("steps", "Steps", { 4, 8, 16, 32, 64 }, 3)
   params:set_action("steps", function(value)
@@ -152,7 +102,7 @@ function init_params()
     engine.steps(steps)
   end)
 
-  params:add_number("pattern", "Pattern", 1, #patterns, 1)
+  params:add_number("pattern", "Pattern", 1, #utils.patterns, 1)
 
   params:add_number("semitones", "Semitones", -24, 24, 0)
   params:set_action("semitones", function(value)
@@ -161,7 +111,7 @@ function init_params()
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
 
-  params:add_separator("Envelope")
+  params:add_group("Envelope/Filter", 7)
   params:add_binary("env", "Enable Envelope", "toggle", 1)
   params:set_action("env", function(value) engine.useEnv(value) end)
 
@@ -189,7 +139,7 @@ function init_params()
   params:add_taper("lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
   params:set_action("lowpass_env_strength", function(value) engine.lowpassEnvStrength(value) end)
 
-  params:add_separator("Randomization")
+  params:add_group("Randomization", 9)
   params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
   params:set_action("random_octave", function(value) engine.randomOctave(value) end)
 
@@ -222,32 +172,32 @@ function init_params()
 end
 
 function init_delay_params()
-  params:add_separator("Delay")
+  params:add_group("Delay", 10)
 
-  params:add_binary('delay_sync', 'Delay Sync', 'toggle', 1)
+  params:add_taper("delay_mix", "Mix", 0, 1, 0.5, 0)
+  params:set_action("delay_mix", function(value) engine.mix(value) end)
 
-  params:add_option("delay_division", "Delay Division", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 3)
+  params:add_binary('delay_sync', 'Sync', 'toggle', 1)
+
+  params:add_option("delay_division", "Division", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 3)
   params:set_action("delay_division", function(value)
     update_delay_time()
   end)
 
-  params:add_taper("delay_time", "Delay Time (non-synced)", 0, 8, 0.5, 0.001)
+  params:add_taper("delay_time", "Time (non-synced)", 0, 8, 0.5, 0.001)
   params:set_action("delay_time", function(value)
     if params:get("delay_sync") == 0 then
       engine.delay(value)
     end
   end)
 
-  params:add_taper("delay_feedback", "Delay Feedback", 0, 20, 1, 0)
+  params:add_taper("delay_feedback", "Feedback", 0, 20, 1, 0)
   params:set_action("delay_feedback", function(value) engine.time(value) end)
 
-  params:add_taper("delay_mix", "Delay Mix", 0, 1, 0.5, 0)
-  params:set_action("delay_mix", function(value) engine.mix(value) end)
+  params:add_control("delay_lowpass", "Lowpass Frequency", controlspec.new(10, 20000, 'exp', 1, 20000, "hz"))
+  params:set_action('delay_lowpass', function(value) engine.lpf(value) end)
 
-  params:add_taper("delay_lowpass", "Delay Lowpass", 1, 20000, 20000)
-  params:set_action("delay_lowpass", function(value) engine.lpf(value) end)
-
-  params:add_taper("delay_highpass", "Delay Highpass", 1, 20000, 1)
+  params:add_control("delay_highpass", "Highpass Frequency", controlspec.new(1, 20000, 'exp', 1, 20, "hz"))
   params:set_action("delay_highpass", function(value) engine.hpf(value) end)
 
   params:add_taper("wiggle_rate", "Wiggle Rate", 0, 20, 0, 0)
@@ -290,20 +240,24 @@ function redraw()
   if fileselect_active then return end
   screen.clear()
 
-  if selected_voice_screen == 1 then
-    draw_step_circle(steps, active_step)
-  elseif selected_voice_screen == 2 then
-    draw_envelope_screen()
-  elseif selected_voice_screen == 3 then
-    draw_random_pan_amp_screen()
-  elseif selected_voice_screen == 4 then
-    draw_random_fifth_octave_screen()
-  elseif selected_voice_screen == 5 then
-    draw_filter_screen()
+  if screen_mode == 1 then
+    -- Display main screens (1-5)
+    if selected_voice_screen == 1 then
+      draw_step_circle(steps, active_step)
+    elseif selected_voice_screen == 2 then
+      draw_envelope_screen()
+    elseif selected_voice_screen == 3 then
+      draw_random_pan_amp_screen()
+    elseif selected_voice_screen == 4 then
+      draw_random_fifth_octave_screen()
+    elseif selected_voice_screen == 5 then
+      draw_filter_screen()
+    end
+  elseif screen_mode == 2 then
+    draw_delay_screen()
   end
 
   draw_screen_indicator()
-
   screen.update()
 end
 
@@ -315,7 +269,7 @@ function draw_screen_indicator()
 
   for i = 1, number_of_screens do
     local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
-    if i == selected_voice_screen then
+    if i == selected_voice_screen and screen_mode == 1 then
       screen.level(15)
     else
       screen.level(3)
@@ -323,6 +277,62 @@ function draw_screen_indicator()
     screen.move(indicator_x, y_position)
     screen.line_rel(0, indicator_height)
     screen.stroke()
+  end
+
+  -- Draw indicator for FX screens
+  if screen_mode == 2 then
+    screen.level(15)
+    screen.move(screen_w - 8, screen_h / 2 - indicator_height / 2)
+    screen.line_rel(0, indicator_height)
+    screen.stroke()
+  end
+end
+
+-- New function to handle Delay screen controls
+function handle_delay_screen_enc(n, delta)
+  -- Placeholder for delay parameter adjustments
+  -- We can define specific parameters here for the Delay screen later
+  if n == 2 then
+    -- Adjust delay parameters (e.g., delay time, feedback) as placeholders
+  elseif n == 3 then
+    -- Adjust other delay parameters (e.g., mix) as placeholders
+  end
+end
+
+function draw_delay_screen()
+  screen.clear()
+  screen.level(15)
+  screen.move(screen_w / 2, screen_h / 2)
+  screen.font_size(12)
+  screen.text_center("Delay")
+end
+
+function enc(n, delta)
+  if n == 1 then
+    if shift then
+      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
+    else
+      if screen_mode == 1 then
+        selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
+      end
+    end
+  else
+    if screen_mode == 1 then
+      if selected_voice_screen == 1 then
+        handle_step_circle_enc(n, delta)
+      elseif selected_voice_screen == 2 then
+        handle_envelope_enc(n, delta)
+      elseif selected_voice_screen == 3 then
+        handle_pan_amp_enc(n, delta)
+      elseif selected_voice_screen == 4 then
+        handle_fifth_octave_enc(n, delta)
+      elseif selected_voice_screen == 5 then
+        handle_filter_enc(n, delta)
+      end
+    elseif screen_mode == 2 then
+      -- Placeholder for future Delay screen-specific encoder handling
+      -- Currently, no parameters are assigned here
+    end
   end
 end
 
@@ -337,10 +347,6 @@ function draw_random_pan_amp_screen()
   local random_pan_value = params:get("random_pan")
   local pan_spread = (screen_w / 6) * random_pan_value
 
-  screen.level(1)
-  screen.rect(pan_center_x - 1, center_y - particle_dispersion / 2, 3, particle_dispersion)
-  screen.fill()
-
   if random_pan_value > 0 then
     for i = 1, num_particles do
       local particle_x = pan_center_x + (math.random() * 2 - 1) * pan_spread
@@ -350,10 +356,13 @@ function draw_random_pan_amp_screen()
       screen.circle(particle_x, particle_y, particle_radius)
       screen.fill()
     end
+  else
+    screen.level(1)
+    screen.rect(pan_center_x - 1, center_y - particle_dispersion / 2, 3, particle_dispersion)
+    screen.fill()
   end
 
-
-
+  -- Amplitude ripple effect
   local ripple_radius_max = screen_h / 4
   local ripple_radius_min = 3
   local amp_center_x = screen_w * 3 / 4
@@ -366,6 +375,7 @@ function draw_random_pan_amp_screen()
     screen.circle(amp_center_x, center_y, ripple_radius)
     screen.stroke()
   end
+
   screen.update()
 end
 
@@ -547,7 +557,7 @@ end
 
 function draw_step_division()
   local step_division = params:get("step_division")
-  local division_text = "1/" .. math.floor(1 / division_factors[step_division])
+  local division_text = "1/" .. math.floor(1 / utils.division_factors[step_division])
 
   screen.level(10)
   screen.font_face(1)
@@ -565,7 +575,7 @@ function draw_step_count(steps)
 end
 
 function draw_pattern_grid()
-  local current_pattern = patterns[params:get("pattern")]
+  local current_pattern = utils.patterns[params:get("pattern")]
   local pattern_length = #current_pattern
   local row_length = 4
   local pattern_x = 5
@@ -641,104 +651,73 @@ function key(n, z)
   end
 end
 
-function enc(n, delta)
-  if n == 1 then
-    selected_voice_screen = util.clamp(selected_voice_screen + delta, 1, number_of_screens)
-  else
-    if selected_voice_screen == 1 then
-      handle_step_circle_enc(n, delta)
-    elseif selected_voice_screen == 2 then
-      handle_envelope_enc(n, delta)
-    elseif selected_voice_screen == 3 then
-      handle_pan_amp_enc(n, delta)
-    elseif selected_voice_screen == 4 then
-      handle_fifth_octave_enc(n, delta)
-    elseif selected_voice_screen == 5 then
-      handle_filter_enc(n, delta)
-    end
-  end
-end
-
 function handle_step_circle_enc(n, delta)
   if n == 2 then
     if shift then
-      handle_param_change("direction", delta, 1, 3, 1, "lin")
+      utils.handle_param_change("direction", delta, 1, 3, 1, "lin")
     else
-      handle_param_change("pattern", delta, 1, #patterns, 1, "lin")
+      utils.handle_param_change("pattern", delta, 1, #utils.patterns, 1, "lin")
     end
   elseif n == 3 then
     if shift then
-      local new_steps = util.clamp(steps + delta, 4, 64)
+      local new_steps = utils.clamp(steps + delta, 4, 64)
       params:set("steps", math.log(new_steps) / math.log(2) - 1)
       steps = new_steps
       engine.steps(steps)
     else
-      handle_param_change("step_division", delta, 1, #division_factors, 1, "lin")
+      utils.handle_param_change("step_division", delta, 1, #utils.division_factors, 1, "lin")
     end
   end
 end
 
 function handle_envelope_enc(n, delta)
   if shift then
-    if n == 2 then handle_param_change("random_attack", delta, 0, 1, 0.01, "lin") end
-    if n == 3 then handle_param_change("random_release", delta, 0, 1, 0.01, "lin") end
+    if n == 2 then utils.handle_param_change("random_attack", delta, 0, 1, 0.01, "lin") end
+    if n == 3 then utils.handle_param_change("random_release", delta, 0, 1, 0.01, "lin") end
   else
     if n == 2 then
-      handle_param_change("attack", delta, 0.001, 1, 0.001, "lin")
+      utils.handle_param_change("attack", delta, 0.001, 1, 0.001, "lin")
       update_env_graph()
     end
     if n == 3 then
-      handle_param_change("release", delta, 0.001, 5, 0.01, "lin")
+      utils.handle_param_change("release", delta, 0.001, 5, 0.01, "lin")
       update_env_graph()
     end
   end
 end
 
 function handle_pan_amp_enc(n, delta)
-  if n == 2 then handle_param_change("random_pan", delta, 0, 1, 0.01, "lin") end
-  if n == 3 then handle_param_change("random_amp", delta, 0, 1, 0.01, "lin") end
+  if n == 2 then utils.handle_param_change("random_pan", delta, 0, 1, 0.01, "lin") end
+  if n == 3 then utils.handle_param_change("random_amp", delta, 0, 1, 0.01, "lin") end
 end
 
 function handle_fifth_octave_enc(n, delta)
   if shift then
-    if n == 2 then handle_param_change("semitones", delta, -24, 24, 1, "lin") end
+    if n == 2 then utils.handle_param_change("semitones", delta, -24, 24, 1, "lin") end
   else
-    if n == 2 then handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
-    if n == 3 then handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
+    if n == 2 then utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
+    if n == 3 then utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
   end
 end
 
 function handle_filter_enc(n, delta)
   if shift then
     if n == 2 then
-      handle_param_change("lowpass_env_strength", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change("lowpass_env_strength", delta, 0, 1, 0.01, "lin")
     elseif n == 3 then
-      handle_param_change("random_lowpass", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change("random_lowpass", delta, 0, 1, 0.01, "lin")
     end
   else
     if n == 2 then
       -- Use exponential scaling for lowpass frequency
-      handle_param_change("lowpass_freq", delta, 10, 20000, 0.05, "exp")
+      utils.handle_param_change("lowpass_freq", delta, 10, 20000, 0.05, "exp")
       update_filter_graph()
     elseif n == 3 then
       -- Use linear scaling for resonance
-      handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
+      utils.handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
       update_filter_graph()
     end
   end
-end
-
-function handle_param_change(param_name, delta, min_val, max_val, step, scale_type)
-  local current_value = params:get(param_name)
-  local new_value
-
-  if scale_type == "exp" then
-    new_value = util.clamp(current_value * math.exp(delta * step), min_val, max_val)
-  else -- Default to linear scaling
-    new_value = util.clamp(current_value + delta * step, min_val, max_val)
-  end
-
-  params:set(param_name, new_value)
 end
 
 function file_select_callback(file_path)
@@ -747,7 +726,7 @@ function file_select_callback(file_path)
   if file_path ~= 'cancel' then
     local split_at = string.match(file_path, "^.*()/")
     selected_file_path = string.sub(file_path, 9, split_at)
-    selected_file_path = util.trim_string_to_width(selected_file_path, 128)
+    selected_file_path = utils.trim_string_to_width(selected_file_path, 128)
     selected_file = string.sub(file_path, split_at + 1)
     params:set("sample", file_path)
     engine.bufferPath(file_path)
@@ -773,7 +752,7 @@ function start_sequence()
   local pattern_index = 1
 
   while true do
-    local current_pattern = patterns[params:get("pattern")]
+    local current_pattern = utils.patterns[params:get("pattern")]
     local pattern_length = #current_pattern
     local direction = params:get("direction")
     local index = 0
@@ -799,13 +778,13 @@ function start_sequence()
         engine.play(start_segment, amp, rate, pan, reverse)
 
         local step_division = params:get("step_division")
-        clock.sync(division_factors[step_division] * 4)
+        clock.sync(utils.division_factors[step_division] * 4)
 
         active_step = index
       end
     else
       local step_division = params:get("step_division")
-      clock.sync(division_factors[step_division] * 4)
+      clock.sync(utils.division_factors[step_division] * 4)
     end
 
     i = i + 1
@@ -819,7 +798,7 @@ end
 function update_delay_time()
   local beat_sec = clock.get_beat_sec()
   local bpm = clock.get_tempo()
-  local division_factor = division_factors[params:get("delay_division")]
+  local division_factor = utils.division_factors[params:get("delay_division")]
   print("beat sec: " .. beat_sec)
 
   local delay_time = beat_sec * division_factor * 4
