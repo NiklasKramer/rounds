@@ -200,7 +200,7 @@ function init_delay_params()
   params:add_control("delay_highpass", "Highpass Frequency", controlspec.new(1, 20000, 'exp', 1, 20, "hz"))
   params:set_action("delay_highpass", function(value) engine.hpf(value) end)
 
-  params:add_taper("wiggle_rate", "Wiggle Rate", 0, 20, 0, 0)
+  params:add_taper("wiggle_rate", "Wiggle Rate", 0, 20, 0, 0.8)
   params:set_action("wiggle_rate", function(value) engine.w_rate(value) end)
 
   params:add_taper("wiggle_depth", "Wiggle Depth", 0, 1, 0, 0)
@@ -241,7 +241,7 @@ function redraw()
   screen.clear()
 
   if screen_mode == 1 then
-    -- Display main screens (1-5)
+    draw_screen_indicator()
     if selected_voice_screen == 1 then
       draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -257,7 +257,7 @@ function redraw()
     draw_delay_screen()
   end
 
-  draw_screen_indicator()
+
   screen.update()
 end
 
@@ -288,52 +288,59 @@ function draw_screen_indicator()
   end
 end
 
--- New function to handle Delay screen controls
-function handle_delay_screen_enc(n, delta)
-  -- Placeholder for delay parameter adjustments
-  -- We can define specific parameters here for the Delay screen later
-  if n == 2 then
-    -- Adjust delay parameters (e.g., delay time, feedback) as placeholders
-  elseif n == 3 then
-    -- Adjust other delay parameters (e.g., mix) as placeholders
-  end
-end
-
 function draw_delay_screen()
-  screen.clear()
-  screen.level(15)
-  screen.move(screen_w / 2, screen_h / 2)
-  screen.font_size(12)
-  screen.text_center("Delay")
-end
+  local center_x = screen_w / 2
+  local center_y = screen_h / 2
+  local base_radius = 25
+  local trail_decay = 0.9
 
-function enc(n, delta)
-  if n == 1 then
-    if shift then
-      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
-    else
-      if screen_mode == 1 then
-        selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
-      end
-    end
+  local delay_time
+  if params:get("delay_sync") == 1 then
+    delay_time = clock.get_beat_sec() * utils.division_factors[params:get("delay_division")] * 4
   else
-    if screen_mode == 1 then
-      if selected_voice_screen == 1 then
-        handle_step_circle_enc(n, delta)
-      elseif selected_voice_screen == 2 then
-        handle_envelope_enc(n, delta)
-      elseif selected_voice_screen == 3 then
-        handle_pan_amp_enc(n, delta)
-      elseif selected_voice_screen == 4 then
-        handle_fifth_octave_enc(n, delta)
-      elseif selected_voice_screen == 5 then
-        handle_filter_enc(n, delta)
-      end
-    elseif screen_mode == 2 then
-      -- Placeholder for future Delay screen-specific encoder handling
-      -- Currently, no parameters are assigned here
-    end
+    delay_time = params:get("delay_time")
   end
+
+  -- Set rotation speed proportional to delay time
+  local rotation_speed = math.pi * 2 * delay_time / 5
+  local feedback = params:get("delay_feedback")
+
+  -- Map mix to dot size range from 1 to 3
+  local mix = params:get("delay_mix")
+  local dot_size = 1 + (mix * 2)
+  -- Adjust rotation effect based on rotate parameter
+  local rotate = params:get("rotate")
+  local rotate_offset = rotate * math.pi * 2 -- Full rotation offset based on rotate value
+
+  -- Adjust radius based on rotate parameter within a ±15% range
+  local radius_variation = base_radius * 0.15 * (rotate - 0.5) * 2 -- Scale between -15% and +15%
+  local radius = base_radius + radius_variation
+
+  -- Calculate number of waveform points based on delay feedback
+  local num_points = math.floor(20 + feedback * 10)
+
+  -- Draw radial waveform with trails
+  for i = 1, num_points do
+    -- Calculate angle with rotation offset and trail fade level
+    local angle = i * (math.pi * 2 / num_points) + rotation_speed * clock.get_beats() + rotate_offset
+    local trail_level = 15 * (trail_decay ^ i) -- Using fixed max brightness
+
+    -- Calculate radial offset based on feedback
+    local offset = radius + math.sin(angle * feedback) * 8
+
+    -- Set brightness for trail effect
+    screen.level(math.floor(trail_level))
+
+    -- Calculate positions
+    local x = center_x + math.cos(angle) * offset
+    local y = center_y + math.sin(angle) * offset
+
+    -- Draw the dot with variable size based on mix
+    screen.circle(x, y, dot_size)
+    screen.fill()
+  end
+
+  screen.update()
 end
 
 function draw_random_pan_amp_screen()
@@ -430,7 +437,6 @@ function draw_random_fifth_octave_screen()
 end
 
 function draw_filter_screen()
-  screen.clear()
   filter_graph:redraw()
 
   -- Draw progress bars below filter graph
@@ -464,12 +470,9 @@ function draw_filter_screen()
   screen.level(1)
   screen.rect(random_lowpass_bar_x, bar_y, bar_max_width, bar_height)
   screen.stroke()
-
-  screen.update()
 end
 
 function draw_envelope_screen()
-  screen.clear()
   env_graph:redraw()
 
   local bar_max_width = 36
@@ -499,20 +502,14 @@ function draw_envelope_screen()
   screen.level(1)
   screen.rect(release_bar_x, bar_y, bar_max_width, bar_height)
   screen.stroke()
-
-  screen.update()
 end
 
 function draw_step_circle(steps, current_step)
-  screen.clear()
-
   draw_step_visual(steps, current_step)
   draw_direction_symbol()
   draw_step_division()
   draw_step_count(steps)
   draw_pattern_grid()
-
-  screen.update()
 end
 
 function draw_step_visual(steps, current_step)
@@ -651,6 +648,34 @@ function key(n, z)
   end
 end
 
+function enc(n, delta)
+  if n == 1 then
+    if shift then
+      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
+    else
+      if screen_mode == 1 then
+        selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
+      end
+    end
+  else
+    if screen_mode == 1 then
+      if selected_voice_screen == 1 then
+        handle_step_circle_enc(n, delta)
+      elseif selected_voice_screen == 2 then
+        handle_envelope_enc(n, delta)
+      elseif selected_voice_screen == 3 then
+        handle_pan_amp_enc(n, delta)
+      elseif selected_voice_screen == 4 then
+        handle_fifth_octave_enc(n, delta)
+      elseif selected_voice_screen == 5 then
+        handle_filter_enc(n, delta)
+      end
+    elseif screen_mode == 2 then
+      handle_delay_screen_enc(n, delta)
+    end
+  end
+end
+
 function handle_step_circle_enc(n, delta)
   if n == 2 then
     if shift then
@@ -691,6 +716,26 @@ function handle_pan_amp_enc(n, delta)
   if n == 3 then utils.handle_param_change("random_amp", delta, 0, 1, 0.01, "lin") end
 end
 
+function handle_delay_screen_enc(n, delta)
+  if shift then
+    if n == 2 then
+      params:delta("delay_mix", delta)
+    elseif n == 3 then
+      params:delta("rotate", delta)
+    end
+  else
+    if n == 2 then
+      if params:get("delay_sync") == 1 then
+        params:delta("delay_division", delta)
+      else
+        params:delta("delay_time", delta)
+      end
+    elseif n == 3 then
+      params:delta("delay_feedback", delta)
+    end
+  end
+end
+
 function handle_fifth_octave_enc(n, delta)
   if shift then
     if n == 2 then utils.handle_param_change("semitones", delta, -24, 24, 1, "lin") end
@@ -726,7 +771,7 @@ function file_select_callback(file_path)
   if file_path ~= 'cancel' then
     local split_at = string.match(file_path, "^.*()/")
     selected_file_path = string.sub(file_path, 9, split_at)
-    selected_file_path = utils.trim_string_to_width(selected_file_path, 128)
+    selected_file_path = util.trim_string_to_width(selected_file_path, 128)
     selected_file = string.sub(file_path, split_at + 1)
     params:set("sample", file_path)
     engine.bufferPath(file_path)
@@ -797,13 +842,12 @@ end
 
 function update_delay_time()
   local beat_sec = clock.get_beat_sec()
-  local bpm = clock.get_tempo()
   local division_factor = utils.division_factors[params:get("delay_division")]
-  print("beat sec: " .. beat_sec)
 
-  local delay_time = beat_sec * division_factor * 4
-  print("delay time: " .. delay_time)
+  local delay_time = beat_sec * division_factor * 4 -- synced time
+  print("sync delay time: " .. delay_time)
 
+  -- Set engine delay if sync is enabled
   if params:get("delay_sync") == 1 then
     engine.delay(delay_time)
   end
