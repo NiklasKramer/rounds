@@ -30,11 +30,18 @@ engine.name = 'Rounds'
 local g = grid.connect()
 
 local EnvGraph = require "envgraph"
+local FilterGraph = require "filtergraph"
 local fileselect = require('fileselect')
 
 local env_graph
+local filter_graph
 local selected_voice_screen = 1
+local number_of_screens = 5
+
+
+
 local shift = false
+
 
 local steps = 16
 local active_step = 0
@@ -49,6 +56,8 @@ local inner_circle_radius = 18
 local circle_x = screen_w / 2
 local circle_y = screen_h / 2
 local direction_symbols = { ">", "<", "~" }
+
+
 
 local patterns = {
   { 1 },
@@ -70,16 +79,25 @@ local patterns = {
   { 1, 1, 0, 1, 1, 1, 0, 1 },
   { 1, 0, 1, 1, 0, 1, 1, 0 },
   { 1, 1, 0, 0, 1, 0, 1, 0 },
-  { 1, 0, 1, 0, 1, 1, 1, 0, 1 },
   { 1, 1, 0, 1, 1, 0, 1, 1 },
   { 1, 1, 1, 0, 0, 1, 0, 1 },
   { 1, 0, 0, 1, 1, 1, 0, 1 },
-  { 1, 0, 0, 1, 0, 1, 0, 1, 1 },
   { 1, 0, 0, 1, 1, 0, 1, 1 },
   { 1, 1, 1, 1, 0, 1, 1, 0 },
-  { 1, 0, 0, 1, 0, 1, 1, 0 },
+  { 1, 0, 0, 0, 0, 1, 1, 0 },
   { 1, 0, 1, 0, 0, 1, 1, 0, 1 },
+  { 1, 0, 1, 0, 1, 1, 1, 0, 1 },
+  { 1, 0, 0, 1, 0, 1, 0, 1, 1 },
+  { 1, 1, 0, 1, 0, 1, 0, 1, 1 },
+  { 1, 1, 0, 1, 0, 1, 1, 0, 1 },
+  { 1, 0, 1, 1, 1, 0, 1, 0, 0, 0 },
+  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1 },
+  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0 },
+  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1 },
+  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 },
+  { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 }
 }
+
 local active_pattern_step = 1
 
 local division_factors = {
@@ -94,7 +112,11 @@ local division_factors = {
 function init()
   init_polls()
   init_params()
+
+
   init_env_graph()
+  init_filter_graph()
+
 
   update_delay_time()
 
@@ -155,8 +177,11 @@ function init_params()
     update_env_graph()
   end)
 
-  params:add_taper('lowpass_freq', 'Lowpass Frequency', 1, 20000, 20000)
+  params:add_control("lowpass_freq", "Lowpass Frequency", controlspec.new(10, 20000, 'exp', 1, 20000, "hz"))
   params:set_action('lowpass_freq', function(value) engine.lowpassFreq(value) end)
+
+  params:add_taper('resonance', 'Resonance', 0.01, 1, 0)
+  params:set_action('resonance', function(value) engine.resonance(1 - value) end)
 
   params:add_taper('highpass_freq', 'Highpass Frequency', 1, 20000, 1)
   params:set_action('highpass_freq', function(value) engine.highpassFreq(value) end)
@@ -261,7 +286,6 @@ function init_steps_as_params()
   end
 end
 
--- Screens
 function redraw()
   if fileselect_active then return end
   screen.clear()
@@ -274,9 +298,32 @@ function redraw()
     draw_random_pan_amp_screen()
   elseif selected_voice_screen == 4 then
     draw_random_fifth_octave_screen()
+  elseif selected_voice_screen == 5 then
+    draw_filter_screen()
   end
 
+  draw_screen_indicator()
+
   screen.update()
+end
+
+function draw_screen_indicator()
+  local indicator_x = 1
+  local indicator_height = 3
+  local indicator_spacing = 2
+  local start_y = (screen_h - (indicator_height + indicator_spacing) * number_of_screens) / 2
+
+  for i = 1, number_of_screens do
+    local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
+    if i == selected_voice_screen then
+      screen.level(15)
+    else
+      screen.level(3)
+    end
+    screen.move(indicator_x, y_position)
+    screen.line_rel(0, indicator_height)
+    screen.stroke()
+  end
 end
 
 function draw_random_pan_amp_screen()
@@ -284,22 +331,30 @@ function draw_random_pan_amp_screen()
   local num_particles = 10
   local particle_radius = 1.5
   local particle_dispersion = screen_h * 0.6
-  local pan_center_x = screen_w / 4
+  local pan_center_x = screen_w / 4 + 4
   local center_y = screen_h / 2
 
   local random_pan_value = params:get("random_pan")
-  local pan_spread = (screen_w / 4) * random_pan_value
+  local pan_spread = (screen_w / 6) * random_pan_value
 
-  for i = 1, num_particles do
-    local particle_x = pan_center_x + (math.random() * 2 - 1) * pan_spread
-    local particle_y = center_y + (math.random() * particle_dispersion - (particle_dispersion / 2))
-    local brightness = math.max(1, math.floor(random_pan_value * 15))
-    screen.level(brightness)
-    screen.circle(particle_x, particle_y, particle_radius)
-    screen.fill()
+  screen.level(1)
+  screen.rect(pan_center_x - 1, center_y - particle_dispersion / 2, 3, particle_dispersion)
+  screen.fill()
+
+  if random_pan_value > 0 then
+    for i = 1, num_particles do
+      local particle_x = pan_center_x + (math.random() * 2 - 1) * pan_spread
+      local particle_y = center_y + (math.random() * particle_dispersion - (particle_dispersion / 2))
+      local brightness = math.max(1, math.floor(random_pan_value * 15))
+      screen.level(brightness)
+      screen.circle(particle_x, particle_y, particle_radius)
+      screen.fill()
+    end
   end
 
-  local ripple_radius_max = screen_h / 3
+
+
+  local ripple_radius_max = screen_h / 4
   local ripple_radius_min = 3
   local amp_center_x = screen_w * 3 / 4
   local random_amp_value = params:get("random_amp")
@@ -360,6 +415,45 @@ function draw_random_fifth_octave_screen()
 
   screen.rect(bar_x_right, bar_y - bar_height / 2, bar_width, bar_height)
   screen.fill()
+
+  screen.update()
+end
+
+function draw_filter_screen()
+  screen.clear()
+  filter_graph:redraw()
+
+  -- Draw progress bars below filter graph
+  local bar_max_width = 36
+  local bar_height = 3
+  local bar_spacing = 4
+  local bar_y = circle_y + 21 -- Position below the filter graph
+
+  -- Lowpass Env Strength on the left
+  local lowpass_env_strength_value = params:get("lowpass_env_strength")
+  local env_strength_bar_width = bar_max_width * lowpass_env_strength_value
+  local env_strength_bar_x = (screen_w / 2) - bar_max_width - bar_spacing
+
+  screen.level(15)
+  screen.rect(env_strength_bar_x, bar_y, env_strength_bar_width, bar_height)
+  screen.fill()
+
+  screen.level(1)
+  screen.rect(env_strength_bar_x, bar_y, bar_max_width, bar_height)
+  screen.stroke()
+
+  -- Randomize Lowpass on the right
+  local random_lowpass_value = params:get("random_lowpass")
+  local random_lowpass_bar_width = bar_max_width * random_lowpass_value
+  local random_lowpass_bar_x = (screen_w / 2) + bar_spacing
+
+  screen.level(15)
+  screen.rect(random_lowpass_bar_x, bar_y, random_lowpass_bar_width, bar_height)
+  screen.fill()
+
+  screen.level(1)
+  screen.rect(random_lowpass_bar_x, bar_y, bar_max_width, bar_height)
+  screen.stroke()
 
   screen.update()
 end
@@ -458,7 +552,7 @@ function draw_step_division()
   screen.level(10)
   screen.font_face(1)
   screen.font_size(8)
-  screen.move(screen_w - 4, 12)
+  screen.move(screen_w - 4, 8)
   screen.text_right(division_text)
 end
 
@@ -505,10 +599,32 @@ function init_env_graph()
   env_graph:set_show_x_axis(true)
 end
 
+function init_filter_graph()
+  local filter_width = 80
+  local filter_height = 40
+  local filter_x = circle_x - (filter_width / 2)
+  local filter_y = circle_y - (filter_height / 2) - 5
+
+  local lowpass_freq = params:get("lowpass_freq")
+  local resonance = params:get("resonance")
+
+  filter_graph = FilterGraph.new(10, 20000, -60, 32.5, 1, 12, lowpass_freq, resonance)
+
+  filter_graph:set_position_and_size(filter_x, filter_y, filter_width, filter_height)
+  filter_graph:set_show_x_axis(true)
+  filter_graph:set_active(true)
+end
+
 function update_env_graph()
   local attack = params:get("attack")
   local release = params:get("release")
   env_graph:edit_ar(attack, release)
+end
+
+function update_filter_graph()
+  local lowpass_freq = params:get("lowpass_freq")
+  local resonance = params:get("resonance")
+  filter_graph:edit(nil, nil, lowpass_freq, resonance)
 end
 
 function key(n, z)
@@ -527,54 +643,102 @@ end
 
 function enc(n, delta)
   if n == 1 then
-    selected_voice_screen = util.clamp(selected_voice_screen + delta, 1, 4)
-  elseif selected_voice_screen == 1 then
-    if n == 2 then
-      if shift then
-        handle_param_change("direction", delta, 1, 3, 1)
-      else
-        handle_param_change("pattern", delta, 1, #patterns, 1)
-      end
-    elseif n == 3 then
-      if shift then
-        local new_steps = util.clamp(steps + delta, 4, 64)
-        params:set("steps", math.log(new_steps) / math.log(2) - 1)
-        steps = new_steps
-        engine.steps(steps)
-      else
-        handle_param_change("step_division", delta, 1, #division_factors, 1)
-      end
-    end
-  elseif selected_voice_screen == 2 then
-    if shift then
-      if n == 2 then handle_param_change("random_attack", delta, 0, 1, 0.01) end
-      if n == 3 then handle_param_change("random_release", delta, 0, 1, 0.01) end
-    else
-      if n == 2 then
-        handle_param_change("attack", delta, 0.001, 1, 0.001)
-        update_env_graph()
-      end
-      if n == 3 then
-        handle_param_change("release", delta, 0.001, 5, 0.01)
-        update_env_graph()
-      end
-    end
-  elseif selected_voice_screen == 3 then
-    if n == 2 then handle_param_change("random_pan", delta, 0, 1, 0.01) end
-    if n == 3 then handle_param_change("random_amp", delta, 0, 1, 0.01) end
-  elseif selected_voice_screen == 4 then
-    if shift then
-      if n == 2 then handle_param_change("semitones", delta, -24, 24, 1) end
-    else
-      if n == 2 then handle_param_change("random_fifth", delta, 0, 1, 0.01) end
-      if n == 3 then handle_param_change("random_octave", delta, 0, 1, 0.01) end
+    selected_voice_screen = util.clamp(selected_voice_screen + delta, 1, number_of_screens)
+  else
+    if selected_voice_screen == 1 then
+      handle_step_circle_enc(n, delta)
+    elseif selected_voice_screen == 2 then
+      handle_envelope_enc(n, delta)
+    elseif selected_voice_screen == 3 then
+      handle_pan_amp_enc(n, delta)
+    elseif selected_voice_screen == 4 then
+      handle_fifth_octave_enc(n, delta)
+    elseif selected_voice_screen == 5 then
+      handle_filter_enc(n, delta)
     end
   end
 end
 
-function handle_param_change(param_name, delta, min_val, max_val, step)
-  local value = params:get(param_name) + delta * step
-  params:set(param_name, util.clamp(value, min_val, max_val))
+function handle_step_circle_enc(n, delta)
+  if n == 2 then
+    if shift then
+      handle_param_change("direction", delta, 1, 3, 1, "lin")
+    else
+      handle_param_change("pattern", delta, 1, #patterns, 1, "lin")
+    end
+  elseif n == 3 then
+    if shift then
+      local new_steps = util.clamp(steps + delta, 4, 64)
+      params:set("steps", math.log(new_steps) / math.log(2) - 1)
+      steps = new_steps
+      engine.steps(steps)
+    else
+      handle_param_change("step_division", delta, 1, #division_factors, 1, "lin")
+    end
+  end
+end
+
+function handle_envelope_enc(n, delta)
+  if shift then
+    if n == 2 then handle_param_change("random_attack", delta, 0, 1, 0.01, "lin") end
+    if n == 3 then handle_param_change("random_release", delta, 0, 1, 0.01, "lin") end
+  else
+    if n == 2 then
+      handle_param_change("attack", delta, 0.001, 1, 0.001, "lin")
+      update_env_graph()
+    end
+    if n == 3 then
+      handle_param_change("release", delta, 0.001, 5, 0.01, "lin")
+      update_env_graph()
+    end
+  end
+end
+
+function handle_pan_amp_enc(n, delta)
+  if n == 2 then handle_param_change("random_pan", delta, 0, 1, 0.01, "lin") end
+  if n == 3 then handle_param_change("random_amp", delta, 0, 1, 0.01, "lin") end
+end
+
+function handle_fifth_octave_enc(n, delta)
+  if shift then
+    if n == 2 then handle_param_change("semitones", delta, -24, 24, 1, "lin") end
+  else
+    if n == 2 then handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
+    if n == 3 then handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
+  end
+end
+
+function handle_filter_enc(n, delta)
+  if shift then
+    if n == 2 then
+      handle_param_change("lowpass_env_strength", delta, 0, 1, 0.01, "lin")
+    elseif n == 3 then
+      handle_param_change("random_lowpass", delta, 0, 1, 0.01, "lin")
+    end
+  else
+    if n == 2 then
+      -- Use exponential scaling for lowpass frequency
+      handle_param_change("lowpass_freq", delta, 10, 20000, 0.05, "exp")
+      update_filter_graph()
+    elseif n == 3 then
+      -- Use linear scaling for resonance
+      handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
+      update_filter_graph()
+    end
+  end
+end
+
+function handle_param_change(param_name, delta, min_val, max_val, step, scale_type)
+  local current_value = params:get(param_name)
+  local new_value
+
+  if scale_type == "exp" then
+    new_value = util.clamp(current_value * math.exp(delta * step), min_val, max_val)
+  else -- Default to linear scaling
+    new_value = util.clamp(current_value + delta * step, min_val, max_val)
+  end
+
+  params:set(param_name, new_value)
 end
 
 function file_select_callback(file_path)

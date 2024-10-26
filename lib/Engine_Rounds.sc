@@ -1,7 +1,7 @@
 Engine_Rounds : CroneEngine {
     var pg, buffer,path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
 	randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
-	release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0;
+	release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -46,7 +46,7 @@ Engine_Rounds : CroneEngine {
 		buffer = Buffer.alloc(context.server, context.server.sampleRate * 1, 2);
 
 		SynthDef(\simpleBufferSynth, {
-			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, hipassFreq = 1, 
+			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance=1, hipassFreq = 1, 
 			out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
 			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1|
 			
@@ -89,7 +89,7 @@ Engine_Rounds : CroneEngine {
 			hipassFreq = hipassFreq + (hpEnvGen * (hipassFreq - 1));  // Modulate within the remaining range
 
 			// Apply filters
-			bufplay = RLPF.ar(bufplay, lowpassFreq.clip(1, 20000));
+			bufplay = RLPF.ar(bufplay, lowpassFreq.clip(1, 20000), resonance);
 			bufplay = RHPF.ar(bufplay, hipassFreq.clip(1, 20000));
 
 			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
@@ -190,6 +190,14 @@ Engine_Rounds : CroneEngine {
 			var newHighpassFreq = msg[1];
 			hipassFreq = newHighpassFreq;
 		});
+
+		this.addCommand(\resonance, "f", { |msg|
+			var newResonance = msg[1];
+			resonance = newResonance;
+		});
+
+
+		
 
 		this.addCommand(\attack, "f", { |msg|
 			attack = msg[1];
@@ -308,6 +316,7 @@ Engine_Rounds : CroneEngine {
 				\hipassFreq, hipassFreqFactor.clip(1, 20000),
 				\lowpassEnvStrength, lowpassEnvStrength,
 				\hipassEnvStrength, hipassEnvStrength,
+				\resonance, resonance,
 				\vol, 1,
 			], target: context.xg);
 		});	
