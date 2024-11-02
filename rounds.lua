@@ -1,30 +1,4 @@
 -- "Rounds" step-based sampler
--- Randomize & modulate: steps,
--- semitones, direction, octave,
--- fifth, panning, reverse,
--- attack/release, amplitude.
---
--- Screens:
--- 1. Step Circle: active steps,
--- adjust steps, direction, play/stop.
--- 2. Envelope: attack/release,
--- adjust & randomize.
--- 3. Pan/Amp: pan particles,
--- amp ripple, adjust & randomize.
--- 4. Fifth/Octave: arcs, adjust
--- semitones, randomize fifth/octave.
---
--- Encoders:
--- - Enc1: change screen (1-4).
--- - Enc2: adjust parameters.
--- - Enc3: adjust step division.
--- - Shift + Enc3: adjust steps.
--- - Shift + Enc2: adjust semitones (screen 4).
---
--- Keys:
--- - Key1: shift (fine adjust).
--- - Key2: play/stop.
--- - Key3: open file (screen 1).
 
 engine.name = 'Rounds'
 
@@ -51,7 +25,6 @@ local selected_file_path = 'none'
 -- Step and Pattern Configuration
 local steps = 16
 local active_step = 0
-local active_pattern_step = 1
 
 -- Timing and Clock
 local clock_id = 0
@@ -62,7 +35,7 @@ local filter_graph
 
 
 
-
+-- INIT
 function init()
   init_polls()
   init_params()
@@ -513,6 +486,7 @@ function handle_filter_enc(n, delta)
   end
 end
 
+-- FILE SELECT
 function file_select_callback(file_path)
   fileselect_active = false
 
@@ -528,6 +502,7 @@ function file_select_callback(file_path)
   redraw()
 end
 
+-- CLOCK
 function clock.transport.start()
   params:set("play_stop", 1)
 end
