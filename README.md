@@ -33,14 +33,14 @@ Screen 2
 
 Screen 3
 
-	•	Enc 1: Random Fifth
-	•	Enc 2: Random Octave
-	•	Enc 1 + Shift: Pitch in Semitones
+	•	Enc 1: Random Pan
+	•	Enc 2: Random Volume
 
 Screen 4
 
-	•	Enc 1: Random Pan
-	•	Enc 2: Random Volume
+	•	Enc 1: Random Fifth
+	•	Enc 2: Random Octave
+	•	Enc 1 + Shift: Pitch in Semitones
 
 Screen 5
 
