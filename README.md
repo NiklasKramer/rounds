@@ -1,64 +1,60 @@
-rounds is a synced sample cutter for monome norns
+rounds
 
-key 1: shift
-key 2: play/stop
-key 3: load sample (screen 1)
+rounds is a synced sample cutter for monome norns. This script allows for intricate sample manipulation with a variety of control options.
 
-enc 1: change voice screen
-enc 1 + shift between voice and fx screen
+Controls
 
-voice screens:
+Key Functions
 
-screen 1:
+	•	Key 1: Shift
+	•	Key 2: Play/Stop
+	•	Key 3: Load Sample (on Voice Screen 1)
 
-enc1: select pattern 
-enc2: change beat length
-enc1 + shift: playback direction
-enc2 + shift: steps 
+Encoder Functions
 
-screen 2:
+	•	Enc 1: Change Voice Screen
+	•	Enc 1 + Shift: Switch between Voice and FX screens
 
-enc1: attack
-enc2: release 
-enc1 + shift: random attack 
-enc2 + shift: random release
+Voice Screens
 
-screen 3:
+Screen 1
 
-enc1: random fith
-enc2: random octave
-enc1 + shift: pitch in semitones
+	•	Enc 1: Select Pattern
+	•	Enc 2: Change Beat Length
+	•	Enc 1 + Shift: Set Playback Direction
+	•	Enc 2 + Shift: Set Steps
 
-screen 4:
+Screen 2
 
-enc1: random pan
-enc2: random volume 
+	•	Enc 1: Attack
+	•	Enc 2: Release
+	•	Enc 1 + Shift: Randomize Attack
+	•	Enc 2 + Shift: Randomize Release
 
-screen 5:
+Screen 3
 
-enc1: filter freq 
-enc2: filter res
-enc1 + shift: random filter freq
-enc2 + shift: filter env strength
+	•	Enc 1: Random Fifth
+	•	Enc 2: Random Octave
+	•	Enc 1 + Shift: Pitch in Semitones
 
-Fx
-Delay Screen:
+Screen 4
 
-enc1: rate
-enc2: feedback
-enc1 + shift: mix
-enc2 + shift: rotate
+	•	Enc 1: Random Pan
+	•	Enc 2: Random Volume
 
+Screen 5
 
+	•	Enc 1: Filter Frequency
+	•	Enc 2: Filter Resonance
+	•	Enc 1 + Shift: Randomize Filter Frequency
+	•	Enc 2 + Shift: Filter Envelope Strength
 
+FX Screen
 
+Delay Screen
 
-
-
-
- 
-
-
-
-
+	•	Enc 1: Rate
+	•	Enc 2: Feedback
+	•	Enc 1 + Shift: Mix
+	•	Enc 2 + Shift: Rotate
 
