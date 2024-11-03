@@ -1,11 +1,11 @@
-# Rounds
+# rounds
 
-**Rounds** is a clocked sample manipulation environment for **monome norns**.
+**rounds** is a clocked sample manipulation environment for **monome norns**.
 
 ---
 
 ## Requirements
-- **Monome Norns** 
+- **monome Norns** 
 
 ## Installation
 1. Go to **Maiden** (Norns' script manager).
