@@ -179,7 +179,7 @@ function init_delay_params()
 
   params:add_binary('delay_sync', 'Sync', 'toggle', 1)
 
-  params:add_option("delay_division", "Division", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 3)
+  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 3)
   params:set_action("delay_division", function(value)
     update_delay_time()
   end)
