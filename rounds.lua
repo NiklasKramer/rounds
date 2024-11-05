@@ -196,19 +196,14 @@ function init_steps_as_params()
     params:set_action("active_" .. i, function(value) engine.active(i, value) end)
 
     params:add_taper("rate" .. i, "rate" .. i, -4, 4, 1, 0)
-    params:set_action("rate" .. i, function(value) engine.rate(i, value) end)
 
     params:add_taper("amp" .. i, "amp" .. i, 0, 1, 1, 0)
-    params:set_action("amp" .. i, function(value) engine.amp(i, value) end)
 
     params:add_binary("reverse" .. i, "reverse" .. i, "toggle", 0)
-    params:set_action("reverse" .. i, function(value) engine.reverse(i, value) end)
 
     params:add_taper("pan" .. i, "pan" .. i, -1, 1, 0.0, 0)
-    params:set_action("pan" .. i, function(value) engine.pan(i, value) end)
 
     params:add_number("segment" .. i, "segment" .. i, 1, steps, i)
-    params:set_action("segment" .. i, function(value) engine.segment(i, value) end)
   end
 end
 
