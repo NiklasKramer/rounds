@@ -155,7 +155,7 @@ function init_delay_params()
 
   params:add_binary('delay_sync', 'Sync', 'toggle', 1)
 
-  params:add_option("delay_division", "Division", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 3)
+  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 9)
   params:set_action("delay_division", function(value)
     update_delay_time()
   end)
@@ -560,8 +560,7 @@ end
 
 function update_delay_time()
   local beat_sec = clock.get_beat_sec()
-  local division_factor = utils.division_factors[params:get("delay_division")]
-
+  local division_factor = utils.delay_division_factors[params:get("delay_division")]
   local delay_time = beat_sec * division_factor * 4 -- synced time
   print("sync delay time: " .. delay_time)
 

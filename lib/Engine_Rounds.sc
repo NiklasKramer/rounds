@@ -16,7 +16,7 @@ Engine_Rounds : CroneEngine {
 			Buffer.read(context.server, path, 0, 1, { |tempBuffer|
 				(tempBuffer.numChannels == 1).if({
 					// Mono file
-					Buffer.readChannel(context.server, path, 0, -1, [0], { |newBuffer|
+					Buffer.readChannel(context.server, path, 0, -1, [0,0], { |newBuffer|
 						buffer = newBuffer;  // Store buffer
 						segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
 						"Buffer loaded. Segment length: %".format(segmentLength).postln;

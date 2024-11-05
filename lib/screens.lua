@@ -72,7 +72,7 @@ function screens.draw_delay_screen()
 
     local delay_time
     if params:get("delay_sync") == 1 then
-        delay_time = clock.get_beat_sec() * utils.division_factors[params:get("delay_division")] * 4
+        delay_time = clock.get_beat_sec() * utils.delay_division_factors[params:get("delay_division")] * 4
     else
         delay_time = params:get("delay_time")
     end
