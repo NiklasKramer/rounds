@@ -1,4 +1,4 @@
--- "Rounds" step-based sampler
+-- rounds is a clocked sample manipulation environment
 
 engine.name = 'Rounds'
 
