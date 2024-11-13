@@ -1,55 +1,56 @@
 Engine_Rounds : CroneEngine {
-    var pg, buffer,path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
-	randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
-	release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0;
+    var pg, buffer, recordBuffer, sample_or_record=0, path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
+    randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
+    release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0, recorder, useRecordBuffer = 0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
     }
 
     // Load a buffer for the single voice
-	loadBuffer {
+    loadBuffer {
 		// Check if the file exists
-		if (File.exists(path), {
-			buffer.do(_.free);  // Free the existing buffer if it exists
+        if (File.exists(path), {
+            buffer.do(_.free);  // Free the existing buffer if it exists
 
-			Buffer.read(context.server, path, 0, 1, { |tempBuffer|
+            Buffer.read(context.server, path, 0, 1, { |tempBuffer|
 				(tempBuffer.numChannels == 1).if({
 					// Mono file
-					Buffer.readChannel(context.server, path, 0, -1, [0,0], { |newBuffer|
+                    Buffer.readChannel(context.server, path, 0, -1, [0,0], { |newBuffer|
 						buffer = newBuffer;  // Store buffer
 						segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
-						"Buffer loaded. Segment length: %".format(segmentLength).postln;
-					});
-				}, {
+                        "Buffer loaded. Segment length: %".format(segmentLength).postln;
+                    });
+                }, {
 					// Stereo file
 					(tempBuffer.numChannels == 2).if({
-						buffer = Buffer.readChannel(context.server, path, 0, -1, [0, 1], {
-							segmentLength = buffer.duration / numSegments; 
-							"Stereo buffer loaded. Segment length: %".format(segmentLength).postln;
+                        buffer = Buffer.readChannel(context.server, path, 0, -1, [0, 1], {
+                            segmentLength = buffer.duration / numSegments; 
+                            "Stereo buffer loaded. Segment length: %".format(segmentLength).postln;
 							trigBus  = Bus.control(context.server, 1);
 						
-						});
-					}, {
-						"Unsupported number of channels: %".format(tempBuffer.numChannels).postln;
-					});
-				});
-			});
-		}, {
-			"File not found: %".format(path).postln;
-		});
-	}
+                        });
+                    }, {
+                        "Unsupported number of channels: %".format(tempBuffer.numChannels).postln;
+                    });
+                });
+            });
+        }, {
+            "File not found: %".format(path).postln;
+        });
+    }
 
 
 
     alloc {
-		buffer = Buffer.alloc(context.server, context.server.sampleRate * 1, 2);
+        buffer = Buffer.alloc(context.server, context.server.sampleRate * 2, 2);
+		recordBuffer = Buffer.alloc(context.server, context.server.sampleRate * 20, 2);
 
 		SynthDef(\simpleBufferSynth, {
 			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance=1, hipassFreq = 1, 
 			out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
 			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1|
-			
+
 			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, lpEnvGen, hpEnvGen;
 
 			segmentSize = BufDur.kr(bufnum) / numSegments;
@@ -72,7 +73,7 @@ Engine_Rounds : CroneEngine {
 			);
 
 			bufplay = BufRd.ar(2, bufnum, phase, loop: 0);
-
+			
 			amp = Lag.kr(amp, ampLag);     
 			pan = Lag.kr(pan, panLag);  
 			gate = Impulse.ar(0);
@@ -102,77 +103,99 @@ Engine_Rounds : CroneEngine {
 
 		
 		SynthDef(\warpDelay, { |out=0, in=32, delay=0.2, time=10, hpf=330, lpf=8200, w_rate=0.667, w_depth=0.00027, rotate=0.0, mix=0.2, i_max_del=8, lagTime=0.1|
-			var inputSignal, modulation, delayedSignal ,feedbackSignal, feedback, smoothedDelay, smoothedTime;
+            var inputSignal, modulation, delayedSignal ,feedbackSignal, feedback, smoothedDelay, smoothedTime;
 
 			inputSignal = In.ar(in, 2); // Input from bus
 
-			smoothedDelay = Lag.kr(delay, lagTime);
-			smoothedTime = Lag.kr(time, lagTime);
+            smoothedDelay = Lag.kr(delay, lagTime);
+            smoothedTime = Lag.kr(time, lagTime);
 
-			feedback = exp(log(0.001) * (smoothedDelay / smoothedTime));
-			modulation = LFPar.kr(w_rate, mul: w_depth);
+            feedback = exp(log(0.001) * (smoothedDelay / smoothedTime));
+            modulation = LFPar.kr(w_rate, mul: w_depth);
 
-			feedbackSignal = LocalIn.ar(2);
-			feedbackSignal = Rotate2.ar(feedbackSignal[0], feedbackSignal[1], rotate).softclip;
+            feedbackSignal = LocalIn.ar(2);
+            feedbackSignal = Rotate2.ar(feedbackSignal[0], feedbackSignal[1], rotate).softclip;
 
-			delayedSignal = DelayL.ar(Limiter.ar(Mix([feedbackSignal * feedback, inputSignal]), 0.99, 0.01), i_max_del, smoothedDelay + modulation);
-			delayedSignal = LPF.ar(HPF.ar(delayedSignal, hpf), lpf);
+            delayedSignal = DelayL.ar(Limiter.ar(Mix([feedbackSignal * feedback, inputSignal]), 0.99, 0.01), i_max_del, smoothedDelay + modulation);
+            delayedSignal = LPF.ar(HPF.ar(delayedSignal, hpf), lpf);
 
-			LocalOut.ar(delayedSignal);
+            LocalOut.ar(delayedSignal);
 			
-			Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
-		}).add;
+            Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
+        }).add;
 
-		context.server.sync;
+        // Continuous recorder SynthDef
+        SynthDef(\continuousRecorder, {
+            |bufnum, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out=0|
+            var signal, pos, playbackSignal;
+            
+            // signal = In.ar(inputBus, 2);
+            signal = SoundIn.ar(inputBus, 2);
+            pos = Phasor.ar(rate: rate * BufRateScale.kr(bufnum), start: 0, end: BufFrames.kr(bufnum), resetPos: 0);
+            
+            // Write to buffer only when isRecording is 1
+            BufWr.ar(signal * isRecording, bufnum, pos, loop: loop);
+        
+        }).add;
+
+
+        context.server.sync;
 
 
 		// Initialize active step
-		activeStep = 0;
+        activeStep = 0;
         // ParGroup for handling the voice
         pg = ParGroup.head(context.xg);
 
-		trigBus  = Bus.control(context.server, 1);
-		delayBus = Bus.audio(context.server, 2);
+        trigBus  = Bus.control(context.server, 1);
+        delayBus = Bus.audio(context.server, 2);
 
 	
 		// Number of steps and segments
-		numSteps = 64;
+        numSteps = 64;
         numSegments = 16;
         // Initialize stepInfo array for the single voice
         segmentLength = buffer.duration / numSegments;
 
+        warpDelay = Synth.new(\warpDelay, [
+            \in, delayBus, 
+            \out, context.out_b.index, 
+            \delay, 0.2, 
+            \time, 10,
+            \hpf, 330,
+            \lpf, 8200,
+            \w_rate, 0.667,
+            \w_depth, 0.00027,
+            \rotate, 0.0,
+            \mix, 0.2,
+        ], target: context.xg);
 
-		warpDelay = Synth.new(\warpDelay, [
-			\in, delayBus, 
-			\out, context.out_b.index, 
-			\delay, 0.2, 
-			\time, 10,
-			\hpf, 330,
-			\lpf, 8200,
-			\w_rate, 0.667,
-			\w_depth, 0.00027,
-			\rotate, 0.0,
-			\mix, 0.2,
+		recorder = Synth.new(\continuousRecorder, [
+			\bufnum, recordBuffer,
+            \inputBus, 0,
+			\loop, 1,
+            \out, context.out_b.index,
 		], target: context.xg);
+		
 
 
-		context.server.sync;
+        context.server.sync;
 
 		// ============================================================
 		// Commands
 		// ============================================================
 
         this.addCommand(\bufferPath, "s", { |msg|
-			path = msg[1];
-			this.loadBuffer();
-			if (buffer.notNil and: { buffer.numFrames > 0 }) {
-				segmentLength = buffer.duration / numSegments;
-				"Segment length updated: %".format(segmentLength).postln;
-			} {
-				"Buffer not loaded correctly or file not found.".postln;
-			}
-		});
-    
+            path = msg[1];
+            this.loadBuffer();
+            if (buffer.notNil and: { buffer.numFrames > 0 }) {
+                segmentLength = buffer.duration / numSegments;
+                "Segment length updated: %".format(segmentLength).postln;
+            } {
+                "Buffer not loaded correctly or file not found.".postln;
+            }
+        });
+
 		this.addCommand(\vol, "f", { |msg|
 			var vol = msg[1];
 		});
@@ -211,12 +234,12 @@ Engine_Rounds : CroneEngine {
 			 useEnv = msg[1];
 		});
 
-		this.addCommand(\steps, "i", { |msg|
+        this.addCommand(\steps, "i", { |msg|
 			var newNumSteps = msg[1];
 			numSegments = newNumSteps;
-			segmentLength = buffer.duration / numSegments;
-			this.loadBuffer();
-		});
+            segmentLength = buffer.duration / numSegments;
+            this.loadBuffer();
+        });
 
 		this.addCommand(\useSampleLength, "f", { |msg|
 			var newUseSampleLength = msg[1];
@@ -279,47 +302,71 @@ Engine_Rounds : CroneEngine {
 			hipassEnvStrength = newHipassEnvStrength;
 		});
 
-		this.addCommand(\play, "ifffi", { |msg|
+        this.addCommand(\play, "ifffi", { |msg|
 
-			var startSegment = msg[1] - 1;
-			var amp = msg[2] + (rrand(-1, 1) * randomAmp);
-			var pan = msg[4] + (rrand(-1, 1) * randomPan);
-			var reverse = wchoose([msg[5], 1], [1 - randomReverse, randomReverse]);
+            var startSegment = msg[1] - 1;
+            var amp = msg[2] + (rrand(-1, 1) * randomAmp);
+            var pan = msg[4] + (rrand(-1, 1) * randomPan);
+            var reverse = wchoose([msg[5], 1], [1 - randomReverse, randomReverse]);
 
-			var attackR = attack + (rrand(0.001, 1) * randomAttack);
-			var releaseR = release + (rrand(0.001, 3) * randomRelease);
+            var attackR = attack + (rrand(0.001, 1) * randomAttack);
+            var releaseR = release + (rrand(0.001, 3) * randomRelease);
 
-			var stepRate = msg[3] * (2 ** (semitones / 12));
-			var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
-			var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
-			var rate = (stepRate * fithFactor) * octaveFactor;
-			var lowpassFreqFactor = lowpassFreq + (rrand(-1, 1) * randomLowPass * 10000);
-			var hipassFreqFactor = hipassFreq + (rrand(-1, 1) * randomHiPass * 10000);
+            var stepRate = msg[3] * (2 ** (semitones / 12));
+            var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
+            var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
+            var rate = (stepRate * fithFactor) * octaveFactor;
+            var lowpassFreqFactor = lowpassFreq + (rrand(-1, 1) * randomLowPass * 10000);
+            var hipassFreqFactor = hipassFreq + (rrand(-1, 1) * randomHiPass * 10000);
 
+            var selectedBuffer = if(sample_or_record == 0, { buffer }, { recordBuffer });
 			
 
-			simpleBuffer = Synth.new(\simpleBufferSynth, [
-				\bufnum, buffer,
-				\startSegment, startSegment,
-				\endSegment, startSegment + 1,
-				\numSegments, numSegments,
-				\amp, amp.clip(0, 1),
-				\rate, rate,
-				\pan, pan,
-				\out, delayBus,
-				\trigIn, trigBus.index,
-				\useEnv, useEnv,
-				\attack, attackR,
-				\release, releaseR,
-				\reverse, reverse,
-				\lowpassFreq, lowpassFreqFactor.clip(1, 20000),
-				\hipassFreq, hipassFreqFactor.clip(1, 20000),
-				\lowpassEnvStrength, lowpassEnvStrength,
-				\hipassEnvStrength, hipassEnvStrength,
-				\resonance, resonance,
-				\vol, 1,
-			], target: context.xg);
-		});	
+            simpleBuffer = Synth.new(\simpleBufferSynth, [
+				\bufnum, selectedBuffer.bufnum,
+                \startSegment, startSegment,
+                \endSegment, startSegment + 1,
+                \numSegments, numSegments,
+                \amp, amp.clip(0, 1),
+                \rate, rate,
+                \pan, pan,
+                \out, delayBus,
+                \trigIn, trigBus.index,
+                \useEnv, useEnv,
+                \attack, attackR,
+                \release, releaseR,
+                \reverse, reverse,
+                \lowpassFreq, lowpassFreqFactor.clip(1, 20000),
+                \hipassFreq, hipassFreqFactor.clip(1, 20000),
+                \lowpassEnvStrength, lowpassEnvStrength,
+                \hipassEnvStrength, hipassEnvStrength,
+                \resonance, resonance,
+                \vol, 1,
+            ], target: context.xg);
+        });
+
+        this.addCommand(\sample_or_record, "i", { |msg|
+            sample_or_record = msg[1];
+            if (sample_or_record == 0) {
+                "Sample mode".postln;
+                segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
+
+            } {
+                "Record mode".postln;
+                segmentLength = recordBuffer.duration / numSegments;  // Recalculate segmentLength
+            }
+
+
+        });
+
+        this.addCommand(\record, "f", { |msg|
+            var isRecording = msg[1];
+            recorder.set(\isRecording, isRecording);
+        });
+
+
+
+
 
 		// Delay Commands
 		this.addCommand(\delay, "f", { |msg|
@@ -363,8 +410,10 @@ Engine_Rounds : CroneEngine {
     // Free resources
     free {
         buffer.free;
+        recordBuffer.free;
+
         pg.free;
-		warpDelay.free;
+        warpDelay.free;
     }
 }
 
