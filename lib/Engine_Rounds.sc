@@ -1,7 +1,7 @@
 Engine_Rounds : CroneEngine {
-    var pg, buffer, recordBuffer, sample_or_record=0, path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
+    var pg, buffer,bufferR, recordBuffer,recordBufferR, sampleOrRecord=0, path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
     randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
-    release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0, recorder, useRecordBuffer = 0;
+    release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0, recorder, useRecordBuffer = 0, loopLength=60;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -16,66 +16,106 @@ Engine_Rounds : CroneEngine {
             Buffer.read(context.server, path, 0, 1, { |tempBuffer|
 				(tempBuffer.numChannels == 1).if({
 					// Mono file
-                    Buffer.readChannel(context.server, path, 0, -1, [0,0], { |newBuffer|
+                    Buffer.readChannel(context.server, path, 0, -1, [0], { |newBuffer|
 						buffer = newBuffer;  // Store buffer
+                        bufferR = newBuffer;  // Store buffer
+						loopLength = buffer.duration;
 						segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
                         "Buffer loaded. Segment length: %".format(segmentLength).postln;
                     });
                 }, {
 					// Stereo file
 					(tempBuffer.numChannels == 2).if({
-                        buffer = Buffer.readChannel(context.server, path, 0, -1, [0, 1], {
-                            segmentLength = buffer.duration / numSegments; 
-                            "Stereo buffer loaded. Segment length: %".format(segmentLength).postln;
+                        buffer = Buffer.readChannel(context.server, path, 0, -1, [0], { |newBufferL|
+                            segmentLength = newBufferL.duration / numSegments; 
+                            buffer = newBufferL;
+							loopLength = buffer.duration;
+                            "Stereo buffer (left) loaded. Segment length: %".format(segmentLength).postln;
 							trigBus  = Bus.control(context.server, 1);
-						
                         });
-                    }, {
-                        "Unsupported number of channels: %".format(tempBuffer.numChannels).postln;
+                        bufferR = Buffer.readChannel(context.server, path, 0, -1, [1], { |newBufferR|
+                            "Stereo buffer (right) loaded.".postln;
+                            bufferR = newBufferR;
+                        });
                     });
                 });
             });
         }, {
             "File not found: %".format(path).postln;
         });
-    }
+}
 
 
 
     alloc {
-        buffer = Buffer.alloc(context.server, context.server.sampleRate * 2, 2);
-		recordBuffer = Buffer.alloc(context.server, context.server.sampleRate * 20, 2);
+        buffer = Buffer.alloc(context.server, context.server.sampleRate * 2, 1);
+        bufferR = Buffer.alloc(context.server, context.server.sampleRate * 2, 1);
+
+		recordBuffer = Buffer.alloc(context.server, context.server.sampleRate * 60, 1);
+        recordBufferR = Buffer.alloc(context.server, context.server.sampleRate * 60, 1);
+
+        // Simple buffer synth
 
 		SynthDef(\simpleBufferSynth, {
-			|bufnum, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance=1, hipassFreq = 1, 
+			|bufnumL, bufnumR, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance = 1, hipassFreq = 1,
 			out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
-			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1|
+			ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1, sampleOrRecord = 0, loopLength = 1|
 
-			var segmentSize, bufplay, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, lpEnvGen, hpEnvGen;
+			var segmentSize, bufplay, bufplayL, bufplayR, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, lpEnvGen, hpEnvGen, loopLengthInFrames, bufferOrLoopLengthFrames;
 
-			segmentSize = BufDur.kr(bufnum) / numSegments;
-			phasorStart = startSegment / numSegments * BufFrames.kr(bufnum);
-			phasorEndRev = (startSegment + 1) / numSegments * BufFrames.kr(bufnum);
-			phasorEnd = BufFrames.kr(bufnum);
+			// Determine segment size based on mode
+			segmentSize = Select.kr(sampleOrRecord, [
+				BufDur.kr(bufnumL) / numSegments,  // Sample mode: use buffer duration
+				loopLength / numSegments          // Record mode: use loopLength
+			]);
 
+			loopLengthInFrames = loopLength * SampleRate.ir;
+
+			bufferOrLoopLengthFrames = Select.kr(sampleOrRecord, [
+				BufFrames.kr(bufnumL),             // Sample mode: use buffer frames
+				loopLengthInFrames        // Record mode: use loopLength in frames
+			]);
+
+
+			// Calculate phasor start and end points
+			phasorStart = startSegment / numSegments * Select.kr(sampleOrRecord, [
+				BufFrames.kr(bufnumL),             // Sample mode: use buffer frames
+				loopLengthInFrames        // Record mode: use loopLength in frames
+			]);
+
+			phasorEndRev = (startSegment + 1) / numSegments * Select.kr(sampleOrRecord, [
+				BufFrames.kr(bufnumL),             // Sample mode: use buffer frames
+				loopLengthInFrames        // Record mode: use loopLength in frames
+			]);
+
+			phasorEnd = Select.kr(sampleOrRecord, [
+				BufFrames.kr(bufnumL),             // Sample mode: use buffer frames
+				loopLengthInFrames        // Record mode: use loopLength in frames
+			]);
+
+			// Determine start and end based on reverse flag
 			end = Select.kr(reverse, [phasorEnd, phasorEndRev]);
 			start = Select.kr(reverse, [phasorStart, 0]);
 
-			rate = rate * (1 - (reverse * 2));
-			rate = Lag.kr(rate, rateLag);  
 
+			rate = rate * (1 - (reverse * 2));
+			rate = Lag.kr(rate, rateLag);
+
+			// Phasor for playback
 			phase = Phasor.ar(
 				trig: Impulse.ar(0),
-				rate: rate * BufRateScale.kr(bufnum), 
-				start: start,  
+				rate: rate * BufRateScale.kr(bufnumL),
+				start: start,
 				end: end,
 				resetPos: phasorStart
 			);
 
-			bufplay = BufRd.ar(2, bufnum, phase, loop: 0);
-			
-			amp = Lag.kr(amp, ampLag);     
-			pan = Lag.kr(pan, panLag);  
+			// Read from buffer
+			bufplayL = BufRd.ar(1, bufnumL, phase, loop: 0);
+			bufplayR = BufRd.ar(1, bufnumR, phase, loop: 0);
+
+			amp = Lag.kr(amp, ampLag);
+			pan = Lag.kr(pan, panLag);
 			gate = Impulse.ar(0);
 
 			// Main amplitude envelope
@@ -83,21 +123,25 @@ Engine_Rounds : CroneEngine {
 
 			// Envelope modulating low-pass filter
 			lpEnvGen = EnvGen.ar(Env.perc(attack, release), gate: gate) * lowpassEnvStrength;
-			lowpassFreq = lowpassFreq + (lpEnvGen * (20000 - lowpassFreq));  // Modulate within the remaining range
+			lowpassFreq = lowpassFreq + (lpEnvGen * (20000 - lowpassFreq));
 
 			// Envelope modulating high-pass filter
 			hpEnvGen = EnvGen.ar(Env.perc(attack, release), gate: gate) * hipassEnvStrength;
-			hipassFreq = hipassFreq + (hpEnvGen * (hipassFreq - 1));  // Modulate within the remaining range
+			hipassFreq = hipassFreq + (hpEnvGen * (hipassFreq - 1));
 
 			// Apply filters
-			bufplay = RLPF.ar(bufplay, lowpassFreq.clip(1, 20000), resonance);
-			bufplay = RHPF.ar(bufplay, hipassFreq.clip(1, 20000));
+			bufplayL = RLPF.ar(bufplayL, lowpassFreq.clip(1, 20000), resonance);
+			bufplayR = RLPF.ar(bufplayR, lowpassFreq.clip(1, 20000), resonance);
+			bufplayL = RHPF.ar(bufplayL, hipassFreq.clip(1, 20000));
+			bufplayR = RHPF.ar(bufplayR, hipassFreq.clip(1, 20000));
 
-			bufplay = Balance2.ar(bufplay[0], bufplay[1], pan);
+			// Balance channels
+			bufplay = Balance2.ar(bufplayL, bufplayR, pan);
 
-			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize-(2*fade), fade]), gate: gate, doneAction: Done.freeSelf);
+			fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize - (2 * fade), fade]), gate: gate, doneAction: Done.freeSelf);
 			envGen = Select.ar(useEnv, [fadeEnvGen, percEnvGen]);
 
+			// Output
 			Out.ar(out, bufplay * amp * vol * envGen);
 		}).add;
 
@@ -124,19 +168,29 @@ Engine_Rounds : CroneEngine {
             Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
         }).add;
 
-        // Continuous recorder SynthDef
         SynthDef(\continuousRecorder, {
-            |bufnum, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out=0|
-            var signal, pos, playbackSignal;
-            
-            // signal = In.ar(inputBus, 2);
-            signal = SoundIn.ar(inputBus, 2);
-            pos = Phasor.ar(rate: rate * BufRateScale.kr(bufnum), start: 0, end: BufFrames.kr(bufnum), resetPos: 0);
-            
-            // Write to buffer only when isRecording is 1
-            BufWr.ar(signal * isRecording, bufnum, pos, loop: loop);
-        
-        }).add;
+			|bufnumL, bufNumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, loopLength = 1|
+			var signalL, signalR, pos, endFrame;
+
+			// Capture stereo input
+			signalL = SoundIn.ar(inputBus);
+			signalR = SoundIn.ar(inputBus + 1);
+
+			// Calculate end frame based on loopLength
+			endFrame = loopLength * SampleRate.ir;
+
+			// Create a position Phasor that wraps within the loopLength
+			pos = Phasor.ar(
+				rate: rate * BufRateScale.kr(bufnumL),
+				start: 0,
+				end: endFrame,
+				resetPos: 0
+			);
+
+			// Write audio to the buffer using wrapped position
+			BufWr.ar(signalL * isRecording, bufnumL, pos, loop: 1);  // Loop is always enabled
+			BufWr.ar(signalR * isRecording, bufNumR, pos, loop: 1);  // Loop is always enabled
+		}).add;
 
 
         context.server.sync;
@@ -171,7 +225,8 @@ Engine_Rounds : CroneEngine {
         ], target: context.xg);
 
 		recorder = Synth.new(\continuousRecorder, [
-			\bufnum, recordBuffer,
+			\bufnumL, recordBuffer,
+            \bufNumR, recordBufferR,
             \inputBus, 0,
 			\loop, 1,
             \out, context.out_b.index,
@@ -238,7 +293,7 @@ Engine_Rounds : CroneEngine {
 			var newNumSteps = msg[1];
 			numSegments = newNumSteps;
             segmentLength = buffer.duration / numSegments;
-            this.loadBuffer();
+            // this.loadBuffer();
         });
 
 		this.addCommand(\useSampleLength, "f", { |msg|
@@ -319,50 +374,62 @@ Engine_Rounds : CroneEngine {
             var lowpassFreqFactor = lowpassFreq + (rrand(-1, 1) * randomLowPass * 10000);
             var hipassFreqFactor = hipassFreq + (rrand(-1, 1) * randomHiPass * 10000);
 
-            var selectedBuffer = if(sample_or_record == 0, { buffer }, { recordBuffer });
+            var selectedBufferL = if(sampleOrRecord == 0, { buffer }, { recordBuffer });
+            var selectedBufferR = if(sampleOrRecord == 0, { bufferR }, { recordBufferR });
 			
 
             simpleBuffer = Synth.new(\simpleBufferSynth, [
-				\bufnum, selectedBuffer.bufnum,
-                \startSegment, startSegment,
-                \endSegment, startSegment + 1,
-                \numSegments, numSegments,
-                \amp, amp.clip(0, 1),
-                \rate, rate,
-                \pan, pan,
-                \out, delayBus,
-                \trigIn, trigBus.index,
-                \useEnv, useEnv,
-                \attack, attackR,
-                \release, releaseR,
-                \reverse, reverse,
-                \lowpassFreq, lowpassFreqFactor.clip(1, 20000),
-                \hipassFreq, hipassFreqFactor.clip(1, 20000),
-                \lowpassEnvStrength, lowpassEnvStrength,
-                \hipassEnvStrength, hipassEnvStrength,
-                \resonance, resonance,
-                \vol, 1,
-            ], target: context.xg);
+			\bufnumL, selectedBufferL.bufnum,
+			\bufnumR, selectedBufferR.bufnum,
+			\startSegment, startSegment,
+			\endSegment, startSegment + 1,
+			\numSegments, numSegments,
+			\amp, amp.clip(0, 1),
+			\rate, rate,
+			\pan, pan,
+			\out, delayBus,
+			\trigIn, trigBus.index,
+			\useEnv, useEnv,
+			\attack, attackR,
+			\release, releaseR,
+			\reverse, reverse,
+			\lowpassFreq, lowpassFreqFactor.clip(1, 20000),
+			\hipassFreq, hipassFreqFactor.clip(1, 20000),
+			\lowpassEnvStrength, lowpassEnvStrength,
+			\hipassEnvStrength, hipassEnvStrength,
+			\resonance, resonance,
+			\loopLength, loopLength,  // Pass updated loopLength
+			\sampleOrRecord, sampleOrRecord,  // Pass the mode
+			\vol, 1,
+		], target: context.xg);
         });
 
-        this.addCommand(\sample_or_record, "i", { |msg|
-            sample_or_record = msg[1];
-            if (sample_or_record == 0) {
-                "Sample mode".postln;
-                segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
+        this.addCommand(\sampleOrRecord, "i", { |msg|
+			sampleOrRecord = msg[1];
+			sampleOrRecord.postln;
+			if (sampleOrRecord == 0) {
+				"Sample mode".postln;
+				segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength
+			} {
+				"Record mode".postln;
+				segmentLength = loopLength / numSegments;  // Use loopLength for calculation
+			}
+		});
 
-            } {
-                "Record mode".postln;
-                segmentLength = recordBuffer.duration / numSegments;  // Recalculate segmentLength
-            }
-
-
-        });
-
-        this.addCommand(\record, "f", { |msg|
-            var isRecording = msg[1];
-            recorder.set(\isRecording, isRecording);
-        });
+		this.addCommand(\record, "f", { |msg|
+			var isRecording = msg[1];
+			recorder.set(\isRecording, isRecording);
+			if (sampleOrRecord == 1) {
+				segmentLength = loopLength / numSegments;  // Recalculate segmentLength for recording
+			}
+		});
+		
+	this.addCommand(\loopLength, "f", { |msg|
+		loopLength = msg[1];
+		recorder.set(\loopLength, loopLength);  // Update recorder
+		segmentLength = loopLength / numSegments;  // Recalculate segmentLength for playback
+		
+	});
 
 
 

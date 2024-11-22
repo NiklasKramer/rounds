@@ -44,6 +44,7 @@ function init()
   init_filter_graph()
 
   update_delay_time()
+  update_record_time()
 
   g.key = function(x, y, z)
     grid_key(x, y, z)
@@ -70,6 +71,8 @@ function init_params()
     end
   end)
 
+
+
   params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
   params:add_option("steps", "Steps", { 4, 8, 16, 32, 64 }, 3)
@@ -86,6 +89,39 @@ function init_params()
   end)
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
+
+  params:add_group("Record", 5)
+  params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
+  params:set_action('sample_or_record', function(value)
+    engine.sampleOrRecord(value)
+  end)
+
+  params:add_binary('record', 'Record', 'toggle', 0)
+  params:set_action('record', function(value)
+    if value == 1 then
+      clock.run(function()
+        clock.sync(1)    -- Synchronize to the next beat
+        engine.record(1) -- Start recording
+        print("Recording started on clock beat.")
+      end)
+    else
+      engine.record(0) -- Stop recording
+      print("Recording stopped.")
+    end
+  end)
+
+  params:add_control("loop_length", "Loop Length", controlspec.new(0, 60, 'lin', 0, 60, "sec"))
+  params:set_action('loop_length', function(value)
+    engine.loopLength(value)
+  end)
+
+  params:add_binary('synced_loop', 'Synced Loop Time', 'toggle', 1)
+
+
+  params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
+  params:set_action('loop_length_in_beats', function(value)
+    update_record_time()
+  end)
 
   params:add_group("Envelope/Filter", 7)
   params:add_binary("env", "Enable Envelope", "toggle", 1)
@@ -508,6 +544,7 @@ end
 
 function clock.tempo_change_handler()
   update_delay_time()
+  update_record_time()
 end
 
 function start_sequence()
@@ -567,5 +604,13 @@ function update_delay_time()
   -- Set engine delay if sync is enabled
   if params:get("delay_sync") == 1 then
     engine.delay(delay_time)
+  end
+end
+
+function update_record_time()
+  local beat_sec = clock.get_beat_sec()
+  local loop_length = params:get("loop_length_in_beats") * beat_sec
+  if (params:get("synced_loop") == 1) then
+    engine.loopLength(loop_length)
   end
 end
