@@ -14,10 +14,13 @@ screens = include('lib/screens')
 local screen_w, screen_h = 128, 64
 local circle_x, circle_y = screen_w / 2, screen_h / 2
 
+record_pointer = 0
+
 
 local selected_voice_screen = 1
 local number_of_screens = 5
-local screen_mode = 1
+local screen_modes = 3
+local screen_mode = 2
 local shift = false
 local fileselect_active = false
 local selected_file_path = 'none'
@@ -54,6 +57,13 @@ end
 function init_polls()
   metro_screen_refresh = metro.init(function(stage) redraw() end, 1 / 60)
   metro_screen_refresh:start()
+
+  record_pointer_poll = poll.set('recorderPos', function(value)
+    record_pointer = value
+  end)
+
+  record_pointer_poll.time = 0.05
+  record_pointer_poll:start()
 end
 
 function init_params()
@@ -75,10 +85,9 @@ function init_params()
 
   params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
-  params:add_option("steps", "Steps", { 4, 8, 16, 32, 64 }, 3)
+  params:add_number("steps", "Steps", 1, 64, 16)
   params:set_action("steps", function(value)
-    steps = ({ 4, 8, 16, 32, 64 })[value]
-    engine.steps(steps)
+    engine.steps(value)
   end)
 
   params:add_number("pattern", "Pattern", 1, #utils.patterns, 1)
@@ -90,32 +99,17 @@ function init_params()
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
 
-  params:add_group("Record", 5)
+  params:add_group("Record", 3)
   params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
   params:set_action('sample_or_record', function(value)
+    params:set("record", 0)
     engine.sampleOrRecord(value)
   end)
 
   params:add_binary('record', 'Record', 'toggle', 0)
   params:set_action('record', function(value)
-    if value == 1 then
-      clock.run(function()
-        clock.sync(1)    -- Synchronize to the next beat
-        engine.record(1) -- Start recording
-        print("Recording started on clock beat.")
-      end)
-    else
-      engine.record(0) -- Stop recording
-      print("Recording stopped.")
-    end
+    engine.record(value)
   end)
-
-  params:add_control("loop_length", "Loop Length", controlspec.new(0, 60, 'lin', 0, 60, "sec"))
-  params:set_action('loop_length', function(value)
-    engine.loopLength(value)
-  end)
-
-  params:add_binary('synced_loop', 'Synced Loop Time', 'toggle', 1)
 
 
   params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
@@ -250,12 +244,9 @@ function redraw()
 
   screens.draw_mode_indicator(screen_mode)
 
-  if screen_mode == 1 then
+  if screen_mode == 2 then
     screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
-  end
-
-  -- Draw content based on the selected screen
-  if screen_mode == 1 then
+    -- Draw content based on the selected voice screen
     if selected_voice_screen == 1 then
       screens.draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -267,9 +258,13 @@ function redraw()
     elseif selected_voice_screen == 5 then
       draw_filter_screen()
     end
-  elseif screen_mode == 2 then
+  elseif screen_mode == 3 then
     screens.draw_delay_screen()
+  elseif screen_mode == 1 then
+    screens.draw_tape_recorder(record_pointer)
   end
+
+
 
   screen.update()
 end
@@ -390,12 +385,27 @@ function key(n, z)
   if n == 1 then
     shift = (z == 1)
   elseif n == 2 and z == 1 then
-    local current_state = params:get("play_stop")
-    params:set("play_stop", 1 - current_state)
+    if screen_mode == 1 then
+      -- Toggle Record Mode On/Off
+      params:set("sample_or_record", 1 - params:get("sample_or_record"))
+    else
+      -- Play/Stop toggle
+      params:set("play_stop", 1 - params:get("play_stop"))
+    end
   elseif n == 3 and z == 1 then
-    if selected_voice_screen == 1 then
-      fileselect_active = true
-      fileselect.enter(_path.audio, file_select_callback, "audio")
+    if screen_mode == 1 then
+      if params:get("sample_or_record") == 1 then
+        params:set("record", 1 - params:get("record"))
+      else
+        fileselect_active = true
+        fileselect.enter(_path.audio, file_select_callback, "audio")
+      end
+    elseif screen_mode == 2 and selected_voice_screen == 1 then
+      if params:get("sample_or_record") == 0 then
+        -- Load file if record_mode is off
+        fileselect_active = true
+        fileselect.enter(_path.audio, file_select_callback, "audio")
+      end
     end
   end
 end
@@ -403,14 +413,15 @@ end
 function enc(n, delta)
   if n == 1 then
     if shift then
-      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
+      screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes) -- Updated range
     else
-      if screen_mode == 1 then
+      if screen_mode == 2 then
         selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
       end
     end
   else
-    if screen_mode == 1 then
+    -- Delegate to screen-specific handlers
+    if screen_mode == 2 then
       if selected_voice_screen == 1 then
         handle_step_circle_enc(n, delta)
       elseif selected_voice_screen == 2 then
@@ -422,8 +433,10 @@ function enc(n, delta)
       elseif selected_voice_screen == 5 then
         handle_filter_enc(n, delta)
       end
-    elseif screen_mode == 2 then
+    elseif screen_mode == 3 then
       handle_delay_screen_enc(n, delta)
+    elseif screen_mode == 1 then
+      handle_record_enc(n, delta) -- Handle tape recorder interactions
     end
   end
 end
@@ -514,6 +527,16 @@ function handle_filter_enc(n, delta)
       utils.handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
       update_filter_graph()
     end
+  end
+end
+
+function handle_record_enc(n, delta)
+  if n == 2 then
+    print("loop_length_in_beats", params:get("loop_length_in_beats"))
+    -- Adjust loop length in beats using encoder 2
+    params:delta("loop_length_in_beats", delta)
+  elseif n == 3 then
+    -- Reserved for additional encoder 3 functionality if needed
   end
 end
 
@@ -610,7 +633,5 @@ end
 function update_record_time()
   local beat_sec = clock.get_beat_sec()
   local loop_length = params:get("loop_length_in_beats") * beat_sec
-  if (params:get("synced_loop") == 1) then
-    engine.loopLength(loop_length)
-  end
+  engine.loopLength(loop_length)
 end

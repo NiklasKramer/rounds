@@ -1,7 +1,7 @@
 Engine_Rounds : CroneEngine {
     var pg, buffer,bufferR, recordBuffer,recordBufferR, sampleOrRecord=0, path="", stepInfo, numSteps, numSegments, delayBus, segmentLength, simpleBuffer, activeStep, fade = 0.1, trigBus, useSampleLength=1, warpDelay,
     randomOctave = 0, randomPan = 0, randomAmp = 0, randomLowPass=0, randomHiPass=0, randomFith = 0, randomReverse = 0, randomAttack = 0, randomRelease = 0, attack=0.01, 
-    release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0, recorder, useRecordBuffer = 0, loopLength=60;
+    release=0.5, useEnv = 1, semitones=0, lowpassFreq=20000, resonance=1, hipassFreq=1, lowpassEnvStrength=0, hipassEnvStrength=0, recorder, useRecordBuffer = 0, loopLength=180, recorderPos=0;
 
     *new { arg context, doneCallback;
         ^super.new(context, doneCallback);
@@ -51,8 +51,10 @@ Engine_Rounds : CroneEngine {
         buffer = Buffer.alloc(context.server, context.server.sampleRate * 2, 1);
         bufferR = Buffer.alloc(context.server, context.server.sampleRate * 2, 1);
 
-		recordBuffer = Buffer.alloc(context.server, context.server.sampleRate * 60, 1);
-        recordBufferR = Buffer.alloc(context.server, context.server.sampleRate * 60, 1);
+		recordBuffer = Buffer.alloc(context.server, context.server.sampleRate * loopLength, 1);
+        recordBufferR = Buffer.alloc(context.server, context.server.sampleRate * loopLength, 1);
+
+		recorderPos = Bus.control(context.server, 1);
 
         // Simple buffer synth
 
@@ -168,29 +170,35 @@ Engine_Rounds : CroneEngine {
             Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
         }).add;
 
-        SynthDef(\continuousRecorder, {
-			|bufnumL, bufNumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, loopLength = 1|
-			var signalL, signalR, pos, endFrame;
+			SynthDef(\continuousRecorder, {
+		|bufnumL, bufNumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
+		var signalL, signalR, pos, endFrame;
 
-			// Capture stereo input
-			signalL = SoundIn.ar(inputBus);
-			signalR = SoundIn.ar(inputBus + 1);
+		// Capture stereo input
+		signalL = SoundIn.ar(inputBus);
+		signalR = SoundIn.ar(inputBus + 1);
 
-			// Calculate end frame based on loopLength
-			endFrame = loopLength * SampleRate.ir;
+		// Calculate end frame based on loopLength
+		endFrame = loopLength * SampleRate.ir;
 
-			// Create a position Phasor that wraps within the loopLength
-			pos = Phasor.ar(
-				rate: rate * BufRateScale.kr(bufnumL),
-				start: 0,
-				end: endFrame,
-				resetPos: 0
-			);
+		// Create a position Phasor that wraps within the loopLength
+		pos = Phasor.ar(
+			trig: isRecording,
+			rate: rate * BufRateScale.kr(bufnumL),
+			start: 0,
+			end: endFrame,
+			resetPos: 0
+		);
 
-			// Write audio to the buffer using wrapped position
-			BufWr.ar(signalL * isRecording, bufnumL, pos, loop: 1);  // Loop is always enabled
-			BufWr.ar(signalR * isRecording, bufNumR, pos, loop: 1);  // Loop is always enabled
-		}).add;
+	
+
+		// Write audio to the buffer only if recording is active
+		BufWr.ar(signalL * isRecording, bufnumL, pos, loop: 1); 
+		BufWr.ar(signalR * isRecording, bufNumR, pos, loop: 1);
+
+		// Output normalized position
+		Out.kr(phase_out, pos / endFrame);
+	}).add;
 
 
         context.server.sync;
@@ -230,6 +238,7 @@ Engine_Rounds : CroneEngine {
             \inputBus, 0,
 			\loop, 1,
             \out, context.out_b.index,
+			\phase_out, recorderPos,
 		], target: context.xg);
 		
 
@@ -424,12 +433,16 @@ Engine_Rounds : CroneEngine {
 			}
 		});
 		
-	this.addCommand(\loopLength, "f", { |msg|
-		loopLength = msg[1];
-		recorder.set(\loopLength, loopLength);  // Update recorder
-		segmentLength = loopLength / numSegments;  // Recalculate segmentLength for playback
-		
-	});
+		this.addCommand(\loopLength, "f", { |msg|
+			loopLength = msg[1];
+			recorder.set(\loopLength, loopLength);  // Update recorder
+			segmentLength = loopLength / numSegments;  // Recalculate segmentLength for playback
+			
+		});
+
+		this.addPoll(\recorderPos, { 
+			recorderPos.getSynchronous;
+		});
 
 
 
@@ -478,7 +491,11 @@ Engine_Rounds : CroneEngine {
     free {
         buffer.free;
         recordBuffer.free;
-
+		bufferR.free;
+		recordBufferR.free;
+		simpleBuffer.free;
+		recorder.free;
+		
         pg.free;
         warpDelay.free;
     }
