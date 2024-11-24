@@ -378,7 +378,7 @@ function screens.draw_tape_recorder(record_pointer)
     end
 
     -- Draw left spool with rotation
-    draw_spool(spool_center_left_x, spool_center_y, rotation_angle)
+    draw_spool(spool_center_left_x, spool_center_y, -rotation_angle + math.pi / 2)
 
     -- Draw right spool with opposite rotation
     draw_spool(spool_center_right_x, spool_center_y, -rotation_angle)
