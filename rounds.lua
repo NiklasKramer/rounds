@@ -81,8 +81,6 @@ function init_params()
     end
   end)
 
-
-
   params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
   params:add_number("steps", "Steps", 1, 64, 16)
@@ -99,7 +97,7 @@ function init_params()
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
 
-  params:add_group("Record", 3)
+  params:add_group("Record", 4)
   params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
   params:set_action('sample_or_record', function(value)
     params:set("record", 0)
@@ -115,6 +113,11 @@ function init_params()
   params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
   params:set_action('loop_length_in_beats', function(value)
     update_record_time()
+  end)
+
+  params:add_binary('loop', 'Loop', 'toggle', 1)
+  params:set_action('loop', function(value)
+    engine.loop(value)
   end)
 
   params:add_group("Envelope/Filter", 7)
@@ -241,7 +244,6 @@ end
 function redraw()
   if fileselect_active then return end
   screen.clear()
-
   screens.draw_mode_indicator(screen_mode)
 
   if screen_mode == 2 then

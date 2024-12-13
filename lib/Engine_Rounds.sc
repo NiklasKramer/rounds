@@ -171,8 +171,8 @@ Engine_Rounds : CroneEngine {
         }).add;
 
 			SynthDef(\continuousRecorder, {
-		|bufnumL, bufNumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
-		var signalL, signalR, pos, endFrame;
+		|bufnumL, bufnumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
+		var signalL, signalR, pos, endFrame, existingLeft, existingRight, mixedLeft, mixedRight;
 
 		// Capture stereo input
 		signalL = SoundIn.ar(inputBus);
@@ -190,11 +190,17 @@ Engine_Rounds : CroneEngine {
 			resetPos: 0
 		);
 
-	
+		// Read existing audio from the buffer
+		existingLeft = BufRd.ar(1, bufnumL, pos, loop: loop);
+		existingRight = BufRd.ar(1, bufnumR, pos, loop: loop);
+
+		// Mix the existing audio with the incoming signal
+		mixedLeft = ((existingLeft * (1 - isRecording)) + (signalL * isRecording));
+		mixedRight = ((existingRight * (1 - isRecording)) + (signalR * isRecording));
 
 		// Write audio to the buffer only if recording is active
-		BufWr.ar(signalL * isRecording, bufnumL, pos, loop: 1); 
-		BufWr.ar(signalR * isRecording, bufNumR, pos, loop: 1);
+		BufWr.ar(mixedLeft, bufnumL, pos, loop: loop); 
+		BufWr.ar(mixedRight, bufnumR, pos, loop: loop);
 
 		// Output normalized position
 		Out.kr(phase_out, pos / endFrame);
@@ -234,7 +240,7 @@ Engine_Rounds : CroneEngine {
 
 		recorder = Synth.new(\continuousRecorder, [
 			\bufnumL, recordBuffer,
-            \bufNumR, recordBufferR,
+            \bufnumR, recordBufferR,
             \inputBus, 0,
 			\loop, 1,
             \out, context.out_b.index,
