@@ -30,7 +30,8 @@ local steps = 16
 local active_step = 0
 
 -- Timing and Clock
-local clock_id = 0
+local play_clock_id = 0
+local reocord_clock_id = 0
 
 -- Envelope and Filter Graphics
 local env_graph
@@ -75,9 +76,9 @@ function init_params()
   params:add_binary("play_stop", "Play/Stop", "toggle", 0)
   params:set_action("play_stop", function(value)
     if value == 1 then
-      clock_id = clock.run(start_sequence)
+      play_clock_id = clock.run(start_sequence)
     else
-      clock.cancel(clock_id)
+      clock.cancel(play_clock_id)
     end
   end)
 
@@ -106,7 +107,12 @@ function init_params()
 
   params:add_binary('record', 'Record', 'toggle', 0)
   params:set_action('record', function(value)
-    engine.record(value)
+    if value == 1 then
+      record_clock_id = clock.run(start_recording)
+    else
+      clock.cancel(record_clock_id)
+      engine.record(0)
+    end
   end)
 
 
@@ -570,6 +576,13 @@ end
 function clock.tempo_change_handler()
   update_delay_time()
   update_record_time()
+end
+
+function start_recording()
+  local step_division = params:get("step_division")
+  local division_factor = utils.division_factors[step_division]
+  clock.sync(division_factor)
+  engine.record(1)
 end
 
 function start_sequence()
