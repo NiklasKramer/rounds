@@ -262,17 +262,19 @@ function screens.draw_tape_recorder(record_pointer)
     screen.move(progress_bar_x, progress_bar_y - 2) -- Position above progress bar
     screen.text("" .. loop_length_in_beats .. "")
 
-    -- Add ARM/REC text aligned to the right side of the progress bar
+    -- Add recording light
     local is_recording = params:get("record") == 1
     local is_armed = params:get("arm_record") == 1
 
     if is_armed or is_recording then
-        local indicator_text = is_recording and "rec" or "arm"
-        local indicator_brightness = is_recording and 15 or 7
+        local light_brightness = is_recording and 15 or 2 -- Bright for recording, dim for armed
+        local light_radius = 2
+        local light_x = progress_bar_x + progress_bar_width - 3
+        local light_y = progress_bar_y - 4 -- Keep position consistent
 
-        screen.level(indicator_brightness)
-        screen.move(progress_bar_x + progress_bar_width, progress_bar_y - 2) -- Align with the right side
-        screen.text_right(indicator_text)
+        screen.level(light_brightness)
+        screen.circle(light_x, light_y, light_radius)
+        screen.fill()
     end
 
     -- Rotation angle for the spools

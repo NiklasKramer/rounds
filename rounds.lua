@@ -418,7 +418,9 @@ function key(n, z)
     if screen_mode == 1 then
       if shift then
         -- Shift + Button 3: Toggle Arm Record
-        params:set("arm_record", 1 - params:get("arm_record"))
+        if params:get("sample_or_record") == 1 then
+          params:set("arm_record", 1 - params:get("arm_record"))
+        end
       else
         -- Toggle Record
         if params:get("sample_or_record") == 1 then
@@ -599,6 +601,7 @@ function clock.tempo_change_handler()
 end
 
 function start_recording()
+  params:set("arm_record", 0)
   local step_division = params:get("step_division")
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
