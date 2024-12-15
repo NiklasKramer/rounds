@@ -170,41 +170,41 @@ Engine_Rounds : CroneEngine {
             Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
         }).add;
 
-			SynthDef(\continuousRecorder, {
-		|bufnumL, bufnumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
-		var signalL, signalR, pos, endFrame, existingLeft, existingRight, mixedLeft, mixedRight;
+		SynthDef(\continuousRecorder, {
+			|bufnumL, bufnumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
+			var signalL, signalR, pos, endFrame, existingLeft, existingRight, mixedLeft, mixedRight;
 
-		// Capture stereo input
-		signalL = SoundIn.ar(inputBus);
-		signalR = SoundIn.ar(inputBus + 1);
+			// Capture stereo input
+			signalL = SoundIn.ar(inputBus);
+			signalR = SoundIn.ar(inputBus + 1);
 
-		// Calculate end frame based on loopLength
-		endFrame = loopLength * SampleRate.ir;
+			// Calculate end frame based on loopLength
+			endFrame = loopLength * SampleRate.ir;
 
-		// Create a position Phasor that wraps within the loopLength
-		pos = Phasor.ar(
-			trig: isRecording,
-			rate: rate * BufRateScale.kr(bufnumL),
-			start: 0,
-			end: endFrame,
-			resetPos: 0
-		);
+			// Create a position Phasor that wraps within the loopLength
+			pos = Phasor.ar(
+				trig: isRecording,
+				rate: rate * BufRateScale.kr(bufnumL),
+				start: 0,
+				end: endFrame,
+				resetPos: 0
+			);
 
-		// Read existing audio from the buffer
-		existingLeft = BufRd.ar(1, bufnumL, pos, loop: loop);
-		existingRight = BufRd.ar(1, bufnumR, pos, loop: loop);
+			// Read existing audio from the buffer
+			existingLeft = BufRd.ar(1, bufnumL, pos, loop: loop);
+			existingRight = BufRd.ar(1, bufnumR, pos, loop: loop);
 
-		// Mix the existing audio with the incoming signal
-		mixedLeft = ((existingLeft * (1 - isRecording)) + (signalL * isRecording));
-		mixedRight = ((existingRight * (1 - isRecording)) + (signalR * isRecording));
+			// Mix the existing audio with the incoming signal
+			mixedLeft = ((existingLeft * (1 - isRecording)) + (signalL * isRecording));
+			mixedRight = ((existingRight * (1 - isRecording)) + (signalR * isRecording));
 
-		// Write audio to the buffer only if recording is active
-		BufWr.ar(mixedLeft, bufnumL, pos, loop: loop); 
-		BufWr.ar(mixedRight, bufnumR, pos, loop: loop);
+			// Write audio to the buffer only if recording is active
+			BufWr.ar(mixedLeft, bufnumL, pos, loop: loop); 
+			BufWr.ar(mixedRight, bufnumR, pos, loop: loop);
 
-		// Output normalized position
-		Out.kr(phase_out, pos / endFrame);
-	}).add;
+			// Output normalized position
+			Out.kr(phase_out, pos / endFrame);
+		}).add;
 
 
         context.server.sync;
@@ -421,7 +421,6 @@ Engine_Rounds : CroneEngine {
 
         this.addCommand(\sampleOrRecord, "i", { |msg|
 			sampleOrRecord = msg[1];
-			sampleOrRecord.postln;
 			if (sampleOrRecord == 0) {
 				"Sample mode".postln;
 				segmentLength = buffer.duration / numSegments;  // Recalculate segmentLength

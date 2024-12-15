@@ -60,7 +60,11 @@ function init_polls()
   metro_screen_refresh:start()
 
   record_pointer_poll = poll.set('recorderPos', function(value)
-    record_pointer = value
+    if params:get("record") == 1 then
+      record_pointer = value
+    else
+      record_pointer = 0
+    end
   end)
 
   record_pointer_poll.time = 0.05
@@ -581,7 +585,7 @@ end
 function start_recording()
   local step_division = params:get("step_division")
   local division_factor = utils.division_factors[step_division]
-  clock.sync(division_factor)
+  clock.sync(division_factor * 4)
   engine.record(1)
 end
 
