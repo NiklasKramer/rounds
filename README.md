@@ -77,3 +77,11 @@
 - **Enc 3**: Feedback
 - **Enc 2 + Shift**: Mix
 - **Enc 3 + Shift**: Rotate
+
+## Record Screen
+
+- **Enc 2**: Adjust recording buffer length (in beats).
+  
+- **Button 2**: Toggle between record and sample mode.
+- **Button 3**: Start/stop recording.
+- **Button 3 + Shift**: Arm recording (recording will start when playback begins).
