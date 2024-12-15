@@ -1,4 +1,5 @@
--- rounds is a clocked sample manipulation environment
+-- rounds is a clocked sample
+-- manipulation environment
 
 engine.name = 'Rounds'
 
@@ -14,10 +15,13 @@ screens = include('lib/screens')
 local screen_w, screen_h = 128, 64
 local circle_x, circle_y = screen_w / 2, screen_h / 2
 
+record_pointer = 0
+
 
 local selected_voice_screen = 1
 local number_of_screens = 5
-local screen_mode = 1
+local screen_modes = 3
+local screen_mode = 2
 local shift = false
 local fileselect_active = false
 local selected_file_path = 'none'
@@ -27,7 +31,8 @@ local steps = 16
 local active_step = 0
 
 -- Timing and Clock
-local clock_id = 0
+local play_clock_id = 0
+local reocord_clock_id = 0
 
 -- Envelope and Filter Graphics
 local env_graph
@@ -44,6 +49,7 @@ function init()
   init_filter_graph()
 
   update_delay_time()
+  update_record_time()
 
   g.key = function(x, y, z)
     grid_key(x, y, z)
@@ -53,10 +59,30 @@ end
 function init_polls()
   metro_screen_refresh = metro.init(function(stage) redraw() end, 1 / 60)
   metro_screen_refresh:start()
+
+  record_pointer_poll = poll.set('recorderPos', function(value)
+    if params:get("record") == 1 then
+      record_pointer = value
+    else
+      record_pointer = 0
+    end
+  end)
+
+  record_pointer_poll.time = 0.05
+  record_pointer_poll:start()
 end
 
 function init_params()
   params:add_separator("Rounds")
+  global_params()
+  recording_params()
+  filter_params()
+  randomization_params()
+  delay_params()
+  steps_as_params()
+end
+
+function global_params()
   params:add_group("Global", 7)
   params:add_file("sample", "Sample")
   params:set_action("sample", function(file) engine.bufferPath(file) end)
@@ -64,18 +90,17 @@ function init_params()
   params:add_binary("play_stop", "Play/Stop", "toggle", 0)
   params:set_action("play_stop", function(value)
     if value == 1 then
-      clock_id = clock.run(start_sequence)
+      play_clock_id = clock.run(start_sequence)
     else
-      clock.cancel(clock_id)
+      clock.cancel(play_clock_id)
     end
   end)
 
   params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
-  params:add_option("steps", "Steps", { 4, 8, 16, 32, 64 }, 3)
+  params:add_number("steps", "Steps", 1, 64, 16)
   params:set_action("steps", function(value)
-    steps = ({ 4, 8, 16, 32, 64 })[value]
-    engine.steps(steps)
+    engine.steps(value)
   end)
 
   params:add_number("pattern", "Pattern", 1, #utils.patterns, 1)
@@ -86,7 +111,36 @@ function init_params()
   end)
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
+end
 
+function recording_params()
+  params:add_group("Record", 4)
+
+  params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
+  params:set_action('sample_or_record', function(value)
+    params:set("record", 0)
+    engine.sampleOrRecord(value)
+  end)
+
+  params:add_binary('record', 'Record', 'toggle', 0)
+  params:set_action('record', function(value)
+    if value == 1 then
+      record_clock_id = clock.run(start_recording)
+    else
+      clock.cancel(record_clock_id)
+      engine.record(0)
+    end
+  end)
+
+  params:add_binary('arm_record', 'Arm Record', 'toggle', 0)
+
+  params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
+  params:set_action('loop_length_in_beats', function(value)
+    update_record_time()
+  end)
+end
+
+function filter_params()
   params:add_group("Envelope/Filter", 7)
   params:add_binary("env", "Enable Envelope", "toggle", 1)
   params:set_action("env", function(value) engine.useEnv(value) end)
@@ -114,7 +168,9 @@ function init_params()
 
   params:add_taper("lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
   params:set_action("lowpass_env_strength", function(value) engine.lowpassEnvStrength(value) end)
+end
 
+function randomization_params()
   params:add_group("Randomization", 9)
   params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
   params:set_action("random_octave", function(value) engine.randomOctave(value) end)
@@ -142,12 +198,9 @@ function init_params()
 
   params:add_taper('random_highpass', 'Randomize Highpass', 0, 1, 0, 0)
   params:set_action('random_highpass', function(value) engine.randomHiPass(value) end)
-
-  init_delay_params()
-  init_steps_as_params()
 end
 
-function init_delay_params()
+function delay_params()
   params:add_group("Delay", 10)
 
   params:add_taper("delay_mix", "Mix", 0, 1, 0.5, 0)
@@ -186,7 +239,7 @@ function init_delay_params()
   params:set_action("rotate", function(value) engine.rotate(value) end)
 end
 
-function init_steps_as_params()
+function steps_as_params()
   params:add_separator("Steps")
   for i = 1, 64 do
     params:add_group("step_" .. i, 7)
@@ -211,15 +264,11 @@ end
 function redraw()
   if fileselect_active then return end
   screen.clear()
-
   screens.draw_mode_indicator(screen_mode)
 
-  if screen_mode == 1 then
+  if screen_mode == 2 then
     screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
-  end
-
-  -- Draw content based on the selected screen
-  if screen_mode == 1 then
+    -- Draw content based on the selected voice screen
     if selected_voice_screen == 1 then
       screens.draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -231,9 +280,13 @@ function redraw()
     elseif selected_voice_screen == 5 then
       draw_filter_screen()
     end
-  elseif screen_mode == 2 then
+  elseif screen_mode == 3 then
     screens.draw_delay_screen()
+  elseif screen_mode == 1 then
+    screens.draw_tape_recorder(record_pointer)
   end
+
+
 
   screen.update()
 end
@@ -354,12 +407,35 @@ function key(n, z)
   if n == 1 then
     shift = (z == 1)
   elseif n == 2 and z == 1 then
-    local current_state = params:get("play_stop")
-    params:set("play_stop", 1 - current_state)
+    if screen_mode == 1 then
+      -- Toggle Record Mode On/Off
+      params:set("sample_or_record", 1 - params:get("sample_or_record"))
+    else
+      -- Play/Stop toggle
+      params:set("play_stop", 1 - params:get("play_stop"))
+    end
   elseif n == 3 and z == 1 then
-    if selected_voice_screen == 1 then
-      fileselect_active = true
-      fileselect.enter(_path.audio, file_select_callback, "audio")
+    if screen_mode == 1 then
+      if shift then
+        -- Shift + Button 3: Toggle Arm Record
+        if params:get("sample_or_record") == 1 then
+          params:set("arm_record", 1 - params:get("arm_record"))
+        end
+      else
+        -- Toggle Record
+        if params:get("sample_or_record") == 1 then
+          params:set("record", 1 - params:get("record"))
+        else
+          fileselect_active = true
+          fileselect.enter(_path.audio, file_select_callback, "audio")
+        end
+      end
+    elseif screen_mode == 2 and selected_voice_screen == 1 then
+      if params:get("sample_or_record") == 0 then
+        -- Load file if record_mode is off
+        fileselect_active = true
+        fileselect.enter(_path.audio, file_select_callback, "audio")
+      end
     end
   end
 end
@@ -367,14 +443,15 @@ end
 function enc(n, delta)
   if n == 1 then
     if shift then
-      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
+      screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes) -- Updated range
     else
-      if screen_mode == 1 then
+      if screen_mode == 2 then
         selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
       end
     end
   else
-    if screen_mode == 1 then
+    -- Delegate to screen-specific handlers
+    if screen_mode == 2 then
       if selected_voice_screen == 1 then
         handle_step_circle_enc(n, delta)
       elseif selected_voice_screen == 2 then
@@ -386,8 +463,10 @@ function enc(n, delta)
       elseif selected_voice_screen == 5 then
         handle_filter_enc(n, delta)
       end
-    elseif screen_mode == 2 then
+    elseif screen_mode == 3 then
       handle_delay_screen_enc(n, delta)
+    elseif screen_mode == 1 then
+      handle_record_enc(n, delta) -- Handle tape recorder interactions
     end
   end
 end
@@ -481,6 +560,16 @@ function handle_filter_enc(n, delta)
   end
 end
 
+function handle_record_enc(n, delta)
+  if n == 2 then
+    print("loop_length_in_beats", params:get("loop_length_in_beats"))
+    -- Adjust loop length in beats using encoder 2
+    params:delta("loop_length_in_beats", delta)
+  elseif n == 3 then
+    -- Reserved for additional encoder 3 functionality if needed
+  end
+end
+
 -- FILE SELECT
 function file_select_callback(file_path)
   fileselect_active = false
@@ -508,11 +597,25 @@ end
 
 function clock.tempo_change_handler()
   update_delay_time()
+  update_record_time()
+end
+
+function start_recording()
+  params:set("arm_record", 0)
+  local step_division = params:get("step_division")
+  local division_factor = utils.division_factors[step_division]
+  clock.sync(division_factor * 4)
+  engine.record(1)
 end
 
 function start_sequence()
   local i = 1
   local pattern_index = 1
+
+  if (params:get('arm_record') == 1) and (params:get('sample_or_record') == 1) then
+    params:set('record', 1)
+    params:set('arm_record', 0)
+  end
 
   while true do
     local current_pattern = utils.patterns[params:get("pattern")]
@@ -568,4 +671,10 @@ function update_delay_time()
   if params:get("delay_sync") == 1 then
     engine.delay(delay_time)
   end
+end
+
+function update_record_time()
+  local beat_sec = clock.get_beat_sec()
+  local loop_length = params:get("loop_length_in_beats") * beat_sec
+  engine.loopLength(loop_length)
 end

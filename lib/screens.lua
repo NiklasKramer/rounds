@@ -6,6 +6,9 @@ local outer_circle_radius, inner_circle_radius = 28, 18
 local direction_symbols = { ">", "<", "~" }
 local circle_x, circle_y = screen_w / 2, screen_h / 2
 
+local tape_head_y_position = nil     -- Initialize to nil
+local tape_head_transition_speed = 5 -- Speed of the transition
+
 screens.screen_h = screen_h
 screens.screen_w = screen_w
 screens.outer_circle_radius = outer_circle_radius
@@ -21,24 +24,27 @@ function screens.draw_screen_indicator(number_of_screens, selected_voice_screen,
     local indicator_spacing = 2
     local start_y = (screen_h - (indicator_height + indicator_spacing) * number_of_screens) / 2
 
-    for i = 1, number_of_screens do
-        local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
-        if i == selected_voice_screen and screen_mode == 1 then
-            screen.level(15)
-        else
-            screen.level(3)
-        end
-        screen.move(indicator_x, y_position)
-        screen.line_rel(0, indicator_height)
-        screen.stroke()
-    end
-
-    -- Draw indicator for FX screens
     if screen_mode == 2 then
+        -- Voice screens
+        for i = 1, number_of_screens do
+            local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
+            if i == selected_voice_screen and screen_mode == 2 then
+                screen.level(15)
+            else
+                screen.level(3)
+            end
+            screen.move(indicator_x, y_position)
+            screen.line_rel(0, indicator_height)
+            screen.stroke()
+        end
+    elseif screen_mode == 3 then
+        -- Delay screen indicator
         screen.level(15)
         screen.move(screen_w - 8, screen_h / 2 - indicator_height / 2)
         screen.line_rel(0, indicator_height)
         screen.stroke()
+    elseif screen_mode == 1 then
+        -- Record screen has no left indicator
     end
 end
 
@@ -47,9 +53,9 @@ function screens.draw_mode_indicator(screen_mode)
     local indicator_height = 3
     local indicator_spacing = 2
 
-    local start_y = (screen_h / 2) - ((indicator_height + indicator_spacing) / 1)
+    local start_y = (screen_h / 2) - ((indicator_height + indicator_spacing) * 1.5)
 
-    for i = 1, 2 do
+    for i = 1, 3 do                                       -- Loop through all three modes
         local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
         local x_position = screen_w - indicator_width - 2 -- Align to the right side
 
@@ -199,6 +205,198 @@ function screens.draw_random_fifth_octave_screen()
 
     screen.rect(bar_x_right, bar_y - bar_height / 2, bar_width, bar_height)
     screen.fill()
+end
+
+function screens.draw_tape_recorder(record_pointer)
+    local outer_spool_radius = 18
+    local inner_spool_radius = 4
+    local tape_head_width = 12
+    local tape_head_height = 6
+
+    local spool_center_left_x = screen_w / 4
+    local spool_center_right_x = screen_w * 3 / 4
+    local spool_center_y = screen_h / 2.8    -- Move spools higher to make room for tape below
+
+    local capstan_x = screen_w / 2 + 20      -- Position capstan slightly to the right of the center
+    local pinch_roller_x = screen_w / 2 - 20 -- Position pinch roller slightly to the left of the center
+
+    -- Determine target y-position of tape head
+    local common_y = spool_center_y + 25
+    local tape_head_target_y = params:get("record") == 1 and common_y or (common_y - 10)
+
+    -- Smoothly transition tape head position
+    if tape_head_y_position == nil then
+        tape_head_y_position = tape_head_target_y -- Initialize on first call
+    else
+        local delta = tape_head_target_y - tape_head_y_position
+        tape_head_y_position = tape_head_y_position + delta * tape_head_transition_speed * (1 / 60)
+    end
+
+    -- Check if the tape head has fully transitioned to the "off" position
+    local tape_head_off = math.abs(tape_head_target_y - tape_head_y_position) < 0.1
+
+    -- Set brightness based on record mode
+    local tape_brightness = params:get("sample_or_record") == 1 and 7 or 1 -- Bright when recording, dim otherwise
+
+    -- Record progress bar at the bottom
+    local progress_bar_width = screen_w - 10
+    local progress_bar_x = 5
+    local progress_bar_y = screen_h - 5
+
+    -- Use record_pointer only if recording is active
+    local progress = params:get("record") == 1 and record_pointer or 0
+
+    -- Draw the progress bar
+    screen.level(5)
+    screen.rect(progress_bar_x, progress_bar_y, progress_bar_width, 2)
+    screen.fill()
+    screen.level(tape_brightness)
+    screen.rect(progress_bar_x, progress_bar_y, progress_bar_width * progress, 2)
+    screen.fill()
+
+    -- Add number of beats
+    local loop_length_in_beats = params:get("loop_length_in_beats")
+    screen.level(tape_brightness)
+    screen.font_face(1)
+    screen.font_size(8)
+    screen.move(progress_bar_x, progress_bar_y - 2) -- Position above progress bar
+    screen.text("" .. loop_length_in_beats .. "")
+
+    -- Add recording light
+    local is_recording = params:get("record") == 1
+    local is_armed = params:get("arm_record") == 1
+
+    if is_armed or is_recording then
+        local light_brightness = is_recording and 15 or 2 -- Bright for recording, dim for armed
+        local light_radius = 2
+        local light_x = progress_bar_x + progress_bar_width - 3
+        local light_y = progress_bar_y - 4 -- Keep position consistent
+
+        screen.level(light_brightness)
+        screen.circle(light_x, light_y, light_radius)
+        screen.fill()
+    end
+
+    -- Rotation angle for the spools
+    local should_spin = params:get("record") == 1 or not tape_head_off
+    local rotation_angle = should_spin and (math.pi * 2 * progress + (util.time() * 0.5 % (math.pi * 2))) or 0
+
+    -- Helper to calculate tape positions at the outer edge of the spools
+    local function get_outer_edge_coords(spool_x, spool_y, angle_offset)
+        return spool_x + math.cos(angle_offset) * outer_spool_radius,
+            spool_y + math.sin(angle_offset) * outer_spool_radius
+    end
+
+    -- Tape path
+    screen.level(tape_brightness)
+    local left_tape_x, left_tape_y = get_outer_edge_coords(spool_center_left_x, spool_center_y, math.pi / 2)    -- Bottom of left spool
+    local right_tape_x, right_tape_y = get_outer_edge_coords(spool_center_right_x, spool_center_y, math.pi / 2) -- Bottom of right spool
+
+    -- Draw tape from left spool to pinch roller
+    screen.move(left_tape_x, left_tape_y)
+    screen.line(pinch_roller_x, common_y)
+    screen.stroke()
+
+    -- Draw tape from pinch roller to tape head
+    screen.move(pinch_roller_x, common_y)
+    screen.line(screen_w / 2 - tape_head_width / 2, tape_head_y_position)
+    screen.stroke()
+
+    -- Draw tape across the tape head
+    screen.move(screen_w / 2 - tape_head_width / 2, tape_head_y_position)
+    screen.line(screen_w / 2 + tape_head_width / 2, tape_head_y_position)
+    screen.stroke()
+
+    -- Draw tape from tape head to capstan
+    screen.move(screen_w / 2 + tape_head_width / 2, tape_head_y_position)
+    screen.line(capstan_x, common_y)
+    screen.stroke()
+
+    -- Draw tape from capstan to right spool
+    screen.move(capstan_x, common_y)
+    screen.line(right_tape_x, right_tape_y)
+    screen.stroke()
+
+    -- Tape head
+    screen.level(tape_brightness)
+    screen.rect(screen_w / 2 - tape_head_width / 2, tape_head_y_position - tape_head_height / 2, tape_head_width,
+        tape_head_height)
+    screen.stroke()
+
+    -- Capstan
+    screen.level(tape_brightness)
+    screen.circle(capstan_x, common_y, 3)   -- Outer circle
+    screen.stroke()
+    screen.circle(capstan_x, common_y, 1.5) -- Inner circle
+    screen.stroke()
+
+    -- Pinch Roller
+    screen.level(tape_brightness)
+    screen.circle(pinch_roller_x, common_y, 3)   -- Outer circle
+    screen.stroke()
+    screen.circle(pinch_roller_x, common_y, 1.5) -- Inner circle
+    screen.stroke()
+
+    -- Helper to draw a square + half-circle shape
+    local function draw_square_with_half_circle(x, y, size, angle)
+        -- Adjust position slightly toward the center
+        local offset_factor = 8
+        local adjusted_radius = outer_spool_radius - offset_factor
+
+        -- Calculate square's center
+        local square_center_x = x + math.cos(angle) * adjusted_radius
+        local square_center_y = y + math.sin(angle) * adjusted_radius
+
+        -- Compute square corner points after rotation
+        local half_size = size / 2
+        local corners = {
+            { math.cos(angle) * -half_size - math.sin(angle) * -half_size,
+                math.sin(angle) * -half_size + math.cos(angle) * -half_size },
+            { math.cos(angle) * half_size - math.sin(angle) * -half_size,
+                math.sin(angle) * half_size + math.cos(angle) * -half_size },
+            { math.cos(angle) * half_size - math.sin(angle) * half_size,
+                math.sin(angle) * half_size + math.cos(angle) * half_size },
+            { math.cos(angle) * -half_size - math.sin(angle) * half_size,
+                math.sin(angle) * -half_size + math.cos(angle) * half_size },
+        }
+
+        -- Draw the rotated square
+        screen.level(tape_brightness)
+        screen.move(square_center_x + corners[1][1], square_center_y + corners[1][2])
+        for i = 2, #corners do
+            screen.line(square_center_x + corners[i][1], square_center_y + corners[i][2])
+        end
+        screen.close()
+        screen.fill()
+
+        -- Draw half-circle connected to the square
+        local half_circle_x = square_center_x + math.cos(angle) * size / 2
+        local half_circle_y = square_center_y + math.sin(angle) * size / 2
+        screen.arc(half_circle_x, half_circle_y, size / 2, angle - math.pi / 2, angle + math.pi / 2)
+        screen.fill()
+    end
+
+    -- Function to draw a spool
+    local function draw_spool(x, y, rotation)
+        -- Draw outer and inner circles
+        screen.level(tape_brightness)
+        screen.circle(x, y, outer_spool_radius)
+        screen.stroke()
+        screen.circle(x, y, inner_spool_radius)
+        screen.stroke()
+
+        -- Draw three evenly spaced shapes around the spool
+        for i = 0, 2 do
+            local angle = rotation + i * (math.pi * 2 / 3) -- Spaced by 120 degrees
+            draw_square_with_half_circle(x, y, 6, angle)
+        end
+    end
+
+    -- Draw left spool with rotation
+    draw_spool(spool_center_left_x, spool_center_y, -rotation_angle + math.pi / 2)
+
+    -- Draw right spool with opposite rotation
+    draw_spool(spool_center_right_x, spool_center_y, -rotation_angle)
 end
 
 ---------------------
