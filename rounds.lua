@@ -1,4 +1,5 @@
--- rounds is a clocked sample manipulation environment
+-- rounds is a clocked sample
+-- manipulation environment
 
 engine.name = 'Rounds'
 
@@ -73,6 +74,15 @@ end
 
 function init_params()
   params:add_separator("Rounds")
+  global_params()
+  recording_params()
+  filter_params()
+  randomization_params()
+  delay_params()
+  steps_as_params()
+end
+
+function global_params()
   params:add_group("Global", 7)
   params:add_file("sample", "Sample")
   params:set_action("sample", function(file) engine.bufferPath(file) end)
@@ -101,8 +111,11 @@ function init_params()
   end)
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
+end
 
+function recording_params()
   params:add_group("Record", 4)
+
   params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
   params:set_action('sample_or_record', function(value)
     params:set("record", 0)
@@ -119,17 +132,15 @@ function init_params()
     end
   end)
 
+  params:add_binary('arm_record', 'Arm Record', 'toggle', 0)
 
   params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
   params:set_action('loop_length_in_beats', function(value)
     update_record_time()
   end)
+end
 
-  params:add_binary('loop', 'Loop', 'toggle', 1)
-  params:set_action('loop', function(value)
-    engine.loop(value)
-  end)
-
+function filter_params()
   params:add_group("Envelope/Filter", 7)
   params:add_binary("env", "Enable Envelope", "toggle", 1)
   params:set_action("env", function(value) engine.useEnv(value) end)
@@ -157,7 +168,9 @@ function init_params()
 
   params:add_taper("lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
   params:set_action("lowpass_env_strength", function(value) engine.lowpassEnvStrength(value) end)
+end
 
+function randomization_params()
   params:add_group("Randomization", 9)
   params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
   params:set_action("random_octave", function(value) engine.randomOctave(value) end)
@@ -185,12 +198,9 @@ function init_params()
 
   params:add_taper('random_highpass', 'Randomize Highpass', 0, 1, 0, 0)
   params:set_action('random_highpass', function(value) engine.randomHiPass(value) end)
-
-  init_delay_params()
-  init_steps_as_params()
 end
 
-function init_delay_params()
+function delay_params()
   params:add_group("Delay", 10)
 
   params:add_taper("delay_mix", "Mix", 0, 1, 0.5, 0)
@@ -229,7 +239,7 @@ function init_delay_params()
   params:set_action("rotate", function(value) engine.rotate(value) end)
 end
 
-function init_steps_as_params()
+function steps_as_params()
   params:add_separator("Steps")
   for i = 1, 64 do
     params:add_group("step_" .. i, 7)
@@ -406,11 +416,17 @@ function key(n, z)
     end
   elseif n == 3 and z == 1 then
     if screen_mode == 1 then
-      if params:get("sample_or_record") == 1 then
-        params:set("record", 1 - params:get("record"))
+      if shift then
+        -- Shift + Button 3: Toggle Arm Record
+        params:set("arm_record", 1 - params:get("arm_record"))
       else
-        fileselect_active = true
-        fileselect.enter(_path.audio, file_select_callback, "audio")
+        -- Toggle Record
+        if params:get("sample_or_record") == 1 then
+          params:set("record", 1 - params:get("record"))
+        else
+          fileselect_active = true
+          fileselect.enter(_path.audio, file_select_callback, "audio")
+        end
       end
     elseif screen_mode == 2 and selected_voice_screen == 1 then
       if params:get("sample_or_record") == 0 then
@@ -592,6 +608,11 @@ end
 function start_sequence()
   local i = 1
   local pattern_index = 1
+
+  if (params:get('arm_record') == 1) and (params:get('sample_or_record') == 1) then
+    params:set('record', 1)
+    params:set('arm_record', 0)
+  end
 
   while true do
     local current_pattern = utils.patterns[params:get("pattern")]
