@@ -25,24 +25,15 @@ utils.division_factors = {
 -- Division factors for timing
 utils.delay_division_factors = {
     1,
-    3 / 4,  -- dotted half
     1 / 2,  -- half
-    3 / 8,  -- dotted quarter
-    1 / 3,  -- 1/4 note triplet
     1 / 4,  -- quarter note
-    3 / 16, -- dotted 1/8
-    1 / 6,  -- 1/8 note triplet
     1 / 8,  -- 1/8 note
-    3 / 32, -- dotted 1/16
-    1 / 12, -- 1/16 note triplet
     1 / 16, -- 1/16 note
-    3 / 64, -- dotted 1/32
-    1 / 24, -- 1/32 note triplet
     1 / 32  -- 1/32 note
 }
 
 utils.delay_divisions_as_strings = {
-    "1", "3/4", "1/2", "3/8", "1/3", "1/4", "3/16", "1/6", "1/8", "3/32", "1/12", "1/16", "3/64", "1/24", "1/32"
+    "1", "1/2", "1/4", "1/8", "1/16", "1/32"
 }
 
 -- Utilsity function for parameter clamping

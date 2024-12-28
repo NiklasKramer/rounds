@@ -201,14 +201,19 @@ function randomization_params()
 end
 
 function delay_params()
-  params:add_group("Delay", 10)
+  params:add_group("Delay", 11)
 
-  params:add_taper("delay_mix", "Mix", 0, 1, 0.5, 0)
+  params:add_taper("delay_mix", "Mix", 0, 1, 0.2, 0)
   params:set_action("delay_mix", function(value) engine.mix(value) end)
 
   params:add_binary('delay_sync', 'Sync', 'toggle', 1)
 
-  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 9)
+  params:add_option("delay_subdivision_type", "Subdivision Type", { "Straight", "Dotted", "Triplet" }, 1)
+  params:set_action("delay_subdivision_type", function(value)
+    update_delay_time()
+  end)
+
+  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 4)
   params:set_action("delay_division", function(value)
     update_delay_time()
   end)
@@ -664,7 +669,18 @@ end
 function update_delay_time()
   local beat_sec = clock.get_beat_sec()
   local division_factor = utils.delay_division_factors[params:get("delay_division")]
-  local delay_time = beat_sec * division_factor * 4 -- synced time
+
+  -- Adjust the delay time based on the subdivision type
+  local subdivision_type = params:get("delay_subdivision_type")
+  local subdivision_multiplier = 1 -- Default: Straight
+
+  if subdivision_type == 2 then
+    subdivision_multiplier = 1.5   -- Dotted
+  elseif subdivision_type == 3 then
+    subdivision_multiplier = 2 / 3 -- Triplet
+  end
+
+  local delay_time = beat_sec * division_factor * 4 * subdivision_multiplier -- Synced time
   print("sync delay time: " .. delay_time)
 
   -- Set engine delay if sync is enabled
