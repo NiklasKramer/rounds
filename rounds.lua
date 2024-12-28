@@ -411,36 +411,60 @@ end
 function key(n, z)
   if n == 1 then
     shift = (z == 1)
-  elseif n == 2 and z == 1 then
+  else
     if screen_mode == 1 then
-      -- Toggle Record Mode On/Off
-      params:set("sample_or_record", 1 - params:get("sample_or_record"))
-    else
-      -- Play/Stop toggle
-      params:set("play_stop", 1 - params:get("play_stop"))
+      handle_tape_recorder_key(n, z)
+    elseif screen_mode == 2 then
+      handle_voice_screen_key(n, z)
+    elseif screen_mode == 3 then
+      handle_delay_screen_key(n, z)
     end
+  end
+end
+
+function handle_delay_screen_key(n, z)
+  if n == 2 and z == 1 then
+    -- Toggle Sync
+    params:set("delay_sync", 1 - params:get("delay_sync"))
   elseif n == 3 and z == 1 then
-    if screen_mode == 1 then
-      if shift then
-        -- Shift + Button 3: Toggle Arm Record
-        if params:get("sample_or_record") == 1 then
-          params:set("arm_record", 1 - params:get("arm_record"))
-        end
-      else
-        -- Toggle Record
-        if params:get("sample_or_record") == 1 then
-          params:set("record", 1 - params:get("record"))
-        else
-          fileselect_active = true
-          fileselect.enter(_path.audio, file_select_callback, "audio")
-        end
+    -- Cycle Subdivision Type
+    local current_subdivision = params:get("delay_subdivision_type")
+    local next_subdivision = current_subdivision % 3 + 1
+    params:set("delay_subdivision_type", next_subdivision)
+  end
+end
+
+function handle_tape_recorder_key(n, z)
+  if n == 2 and z == 1 then
+    -- Toggle Record Mode On/Off
+    params:set("sample_or_record", 1 - params:get("sample_or_record"))
+  elseif n == 3 and z == 1 then
+    if shift then
+      -- Shift + Button 3: Toggle Arm Record
+      if params:get("sample_or_record") == 1 then
+        params:set("arm_record", 1 - params:get("arm_record"))
       end
-    elseif screen_mode == 2 and selected_voice_screen == 1 then
-      if params:get("sample_or_record") == 0 then
-        -- Load file if record_mode is off
+    else
+      -- Toggle Record
+      if params:get("sample_or_record") == 1 then
+        params:set("record", 1 - params:get("record"))
+      else
         fileselect_active = true
         fileselect.enter(_path.audio, file_select_callback, "audio")
       end
+    end
+  end
+end
+
+function handle_voice_screen_key(n, z)
+  if n == 2 and z == 1 then
+    -- Toggle Play/Stop
+    params:set("play_stop", 1 - params:get("play_stop"))
+  elseif n == 3 and z == 1 then
+    -- Handle file selection or pattern change logic
+    if selected_voice_screen == 1 and params:get("sample_or_record") == 0 then
+      fileselect_active = true
+      fileselect.enter(_path.audio, file_select_callback, "audio")
     end
   end
 end
@@ -667,10 +691,11 @@ function start_sequence()
 end
 
 function update_delay_time()
-  local beat_sec = clock.get_beat_sec()
+  local bpm = clock.get_tempo() -- Get the current BPM
+  print("bpm: " .. bpm)
+
   local division_factor = utils.delay_division_factors[params:get("delay_division")]
 
-  -- Adjust the delay time based on the subdivision type
   local subdivision_type = params:get("delay_subdivision_type")
   local subdivision_multiplier = 1 -- Default: Straight
 
@@ -680,7 +705,7 @@ function update_delay_time()
     subdivision_multiplier = 2 / 3 -- Triplet
   end
 
-  local delay_time = beat_sec * division_factor * 4 * subdivision_multiplier -- Synced time
+  local delay_time = (60 / bpm) * division_factor * 4 * subdivision_multiplier
   print("sync delay time: " .. delay_time)
 
   -- Set engine delay if sync is enabled
