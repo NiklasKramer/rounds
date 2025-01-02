@@ -78,6 +78,10 @@
 - **Enc 2 + Shift**: Mix
 - **Enc 3 + Shift**: Rotate
 
+- **Button 2**: Toggle between delay sync/unsync.
+- **Button 3**: Toggle between straight/dotted/thirds
+  
+
 ## Record Screen
 
 - **Enc 2**: Adjust recording buffer length (in beats).
