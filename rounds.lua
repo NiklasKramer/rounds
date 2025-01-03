@@ -179,12 +179,14 @@ function filter_params()
 end
 
 function randomization_params()
-  params:add_group("Randomization", 9)
+  params:add_group("Randomization", 10)
   params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
   params:set_action("random_octave", function(value) engine.randomOctave(value) end)
 
   params:add_taper("random_fifth", "Randomize Fifth", 0, 1, 0, 0)
   params:set_action("random_fifth", function(value) engine.randomFith(value) end)
+
+  params:add_option("random_scale", "Random Scale", utils.scale_names, 2)
 
   params:add_taper("random_pan", "Randomize Pan", 0, 1, 0, 0)
   params:set_action("random_pan", function(value) engine.randomPan(value) end)
@@ -308,6 +310,26 @@ function redraw()
   screen.update()
 end
 
+local banner_position = "bottom_center" -- Default position
+
+function set_show_info_banner(message, position)
+  if message and message ~= "" then
+    info_banner_text = message
+    show_info_banner = true
+
+    -- Set the position if provided
+    if position then
+      banner_position = position
+    end
+
+    metro_info_banner:stop()
+    metro_info_banner:start()
+    redraw()
+  else
+    print("Warning: Attempted to show an empty info banner.")
+  end
+end
+
 function draw_info_banner()
   if not show_info_banner then return end
 
@@ -319,11 +341,27 @@ function draw_info_banner()
   local text_width = screen.text_extents(info_banner_text)
   local banner_width = math.max(text_width + padding, min_banner_width)
 
-  -- Calculate banner position (bottom-center)
-  local banner_x = (screen_w - banner_width) / 2
-  local banner_y = screen_h - banner_height - 2
+  local banner_x, banner_y
 
-  -- Draw banner background (subtle level)
+  -- Calculate banner position based on selected option
+  if banner_position == "center" then
+    banner_x = (screen_w - banner_width) / 2
+    banner_y = (screen_h - banner_height) / 2
+  elseif banner_position == "top_left" then
+    banner_x = 2
+    banner_y = 2
+  elseif banner_position == "top_right" then
+    banner_x = screen_w - banner_width - 2
+    banner_y = 2
+  elseif banner_position == "bottom_center" then
+    banner_x = (screen_w - banner_width) / 2
+    banner_y = screen_h - banner_height - 2
+  else
+    print("Unknown banner position: " .. banner_position)
+    return
+  end
+
+  -- Draw banner background
   screen.level(1) -- Dim background level
   screen.rect(banner_x, banner_y, banner_width, banner_height)
   screen.fill()
@@ -337,18 +375,6 @@ function draw_info_banner()
 
   screen.move(text_x, text_y)
   screen.text(info_banner_text)
-end
-
-function set_show_info_banner(message)
-  if message and message ~= "" then
-    info_banner_text = message
-    show_info_banner = true
-    metro_info_banner:stop()
-    metro_info_banner:start()
-    redraw()
-  else
-    print("Warning: Attempted to show an empty info banner.")
-  end
 end
 
 function draw_filter_screen()
@@ -504,16 +530,19 @@ function handle_tape_recorder_key(n, z)
   if n == 2 and z == 1 then
     -- Toggle Record Mode On/Off
     params:set("sample_or_record", 1 - params:get("sample_or_record"))
+    set_show_info_banner(params:get("sample_or_record") == 1 and "REC MODE" or "SAMPLE MODE", "center")
   elseif n == 3 and z == 1 then
     if shift then
       -- Shift + Button 3: Toggle Arm Record
       if params:get("sample_or_record") == 1 then
         params:set("arm_record", 1 - params:get("arm_record"))
+        set_show_info_banner(params:get("arm_record") == 1 and "ARM ON" or "ARM OFF", "center")
       end
     else
       -- Toggle Record
       if params:get("sample_or_record") == 1 then
         params:set("record", 1 - params:get("record"))
+        -- set_show_info_banner(params:get("record") == 1 and "REC" or "STOP", "center")
       else
         fileselect_active = true
         fileselect.enter(_path.audio, file_select_callback, "audio")
@@ -524,8 +553,20 @@ end
 
 function handle_voice_screen_key(n, z)
   if n == 2 and z == 1 then
-    -- Toggle Play/Stop
-    params:set("play_stop", 1 - params:get("play_stop"))
+    -- Check if we're on the "Random Octave" screen
+    if selected_voice_screen == 4 then
+      -- Toggle through random scales
+      local current_scale = params:get("random_scale")
+      local next_scale = (current_scale % #utils.scale_names) + 1
+      params:set("random_scale", next_scale)
+
+      -- Show info banner with the name of the selected scale
+      local scale_name = utils.scale_names[next_scale]
+      set_show_info_banner(scale_name)
+    else
+      -- Toggle Play/Stop
+      params:set("play_stop", 1 - params:get("play_stop"))
+    end
   elseif n == 3 and z == 1 then
     -- Handle file selection or pattern change logic
     if selected_voice_screen == 1 and params:get("sample_or_record") == 0 then
@@ -617,11 +658,14 @@ function handle_delay_screen_enc(n, delta)
     if n == 2 then
       if params:get("delay_sync") == 1 then
         params:delta("delay_division", delta)
+        set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
       else
         params:delta("delay_time", delta)
+        set_show_info_banner(params:get("delay_time"))
       end
     elseif n == 3 then
       params:delta("delay_feedback", delta)
+      set_show_info_banner('FB: ' .. params:get("delay_feedback"))
     end
   end
 end
@@ -629,6 +673,7 @@ end
 function handle_fifth_octave_enc(n, delta)
   if shift then
     if n == 2 then utils.handle_param_change("semitones", delta, -24, 24, 1, "lin") end
+    set_show_info_banner(params:get("semitones"))
   else
     if n == 2 then utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
     if n == 3 then utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
@@ -732,10 +777,31 @@ function start_sequence()
       local active = params:get("active_" .. index) == 1
       if active then
         local start_segment = params:get("segment" .. index)
-        local rate = params:get("rate" .. index)
         local reverse = params:get("reverse" .. index)
         local amp = params:get("amp" .. index)
         local pan = params:get("pan" .. index)
+
+        -- Base semitones
+        local semitones = params:get("semitones")
+
+        -- Apply random scale note
+        local scale_index = params:get("random_scale")
+        local scale_name = utils.scale_names[scale_index]
+        local selected_scale = utils.scales[scale_name]
+
+        if selected_scale and math.random() < params:get("random_fifth") then
+          local scale_add = selected_scale[math.random(1, #selected_scale)]
+          semitones = semitones + scale_add
+        end
+
+        -- Apply random octave
+        if math.random() < params:get("random_octave") then
+          semitones = semitones + 12
+        end
+
+        -- Calculate playback rate
+        local rate = math.pow(2, semitones / 12)
+
         engine.play(start_segment, amp, rate, pan, reverse)
 
         local step_division = params:get("step_division")

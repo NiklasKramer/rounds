@@ -378,14 +378,12 @@ Engine_Rounds : CroneEngine {
             var amp = msg[2] + (rrand(-1, 1) * randomAmp);
             var pan = msg[4] + (rrand(-1, 1) * randomPan);
             var reverse = wchoose([msg[5], 1], [1 - randomReverse, randomReverse]);
+			var rate = msg[3];
 
             var attackR = attack + (rrand(0.001, 1) * randomAttack);
             var releaseR = release + (rrand(0.001, 3) * randomRelease);
 
             var stepRate = msg[3] * (2 ** (semitones / 12));
-            var fithFactor = wchoose([1, 1.5], [1 - randomFith, randomFith]); 
-            var octaveFactor = wchoose([1, 2], [1 - randomOctave, randomOctave]);
-            var rate = (stepRate * fithFactor) * octaveFactor;
             var lowpassFreqFactor = lowpassFreq + (rrand(-1, 1) * randomLowPass * 10000);
             var hipassFreqFactor = hipassFreq + (rrand(-1, 1) * randomHiPass * 10000);
 

@@ -17,6 +17,26 @@ utils.patterns = {
     { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 }, { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 }
 }
 
+utils.scales = {
+    ["4th"] = { 5 },
+    ["5th"] = { 7 },
+    ["sus2"] = { 2, 7 },
+    ["sus4"] = { 5, 7 },
+    ["sus2/4"] = { 2, 5, 7 },
+    ["maj penta"] = { 2, 4, 7, 9 },
+    ["min penta"] = { 3, 5, 7, 10 },
+}
+
+utils.scale_names = {
+    "4th",
+    "5th",
+    "sus2",
+    "sus4",
+    "sus2/4",
+    "maj penta",
+    "min penta"
+}
+
 -- Division factors for timing
 utils.division_factors = {
     [1] = 1, [2] = 1 / 2, [3] = 1 / 4, [4] = 1 / 8, [5] = 1 / 16, [6] = 1 / 32
