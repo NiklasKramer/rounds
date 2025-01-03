@@ -56,9 +56,12 @@
 
 ### Screen 4
 
-- **Enc 2**: Random Fifth
+- **Enc 2**: Random Scale
 - **Enc 3**: Random Octave
 - **Enc 2 + Shift**: Pitch in Semitones
+
+- **Button 2**: Toggle between Scales 
+
 
 ### Screen 5
 
