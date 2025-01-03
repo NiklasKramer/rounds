@@ -26,6 +26,10 @@ local shift = false
 local fileselect_active = false
 local selected_file_path = 'none'
 
+local show_info_banner = false
+local metro_info_banner
+local info_banner_text = ""
+
 -- Step and Pattern Configuration
 local steps = 16
 local active_step = 0
@@ -67,9 +71,13 @@ function init_polls()
       record_pointer = 0
     end
   end)
-
   record_pointer_poll.time = 0.05
   record_pointer_poll:start()
+
+  metro_info_banner = metro.init(function(stage)
+    show_info_banner = false
+    redraw()
+  end, 0.6)
 end
 
 function init_params()
@@ -269,11 +277,12 @@ end
 function redraw()
   if fileselect_active then return end
   screen.clear()
+
+  -- Draw the main screen components
   screens.draw_mode_indicator(screen_mode)
 
   if screen_mode == 2 then
     screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
-    -- Draw content based on the selected voice screen
     if selected_voice_screen == 1 then
       screens.draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -291,9 +300,55 @@ function redraw()
     screens.draw_tape_recorder(record_pointer)
   end
 
-
+  -- Draw the info banner if active
+  if show_info_banner then
+    draw_info_banner()
+  end
 
   screen.update()
+end
+
+function draw_info_banner()
+  if not show_info_banner then return end
+
+  local min_banner_width = 40
+  local padding = 5
+  local banner_height = 10
+
+  -- Measure the text width
+  local text_width = screen.text_extents(info_banner_text)
+  local banner_width = math.max(text_width + padding, min_banner_width)
+
+  -- Calculate banner position (bottom-center)
+  local banner_x = (screen_w - banner_width) / 2
+  local banner_y = screen_h - banner_height - 2
+
+  -- Draw banner background (subtle level)
+  screen.level(1) -- Dim background level
+  screen.rect(banner_x, banner_y, banner_width, banner_height)
+  screen.fill()
+
+  -- Draw banner text
+  screen.level(15)
+  screen.font_face(1)
+  screen.font_size(8)
+  local text_x = banner_x + (banner_width - text_width) / 2
+  local text_y = banner_y + banner_height - 3
+
+  screen.move(text_x, text_y)
+  screen.text(info_banner_text)
+end
+
+function set_show_info_banner(message)
+  if message and message ~= "" then
+    info_banner_text = message
+    show_info_banner = true
+    metro_info_banner:stop()
+    metro_info_banner:start()
+    redraw()
+  else
+    print("Warning: Attempted to show an empty info banner.")
+  end
 end
 
 function draw_filter_screen()
@@ -424,13 +479,24 @@ end
 
 function handle_delay_screen_key(n, z)
   if n == 2 and z == 1 then
-    -- Toggle Sync
     params:set("delay_sync", 1 - params:get("delay_sync"))
+    local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
+    set_show_info_banner(sync_state)
   elseif n == 3 and z == 1 then
-    -- Cycle Subdivision Type
     local current_subdivision = params:get("delay_subdivision_type")
-    local next_subdivision = current_subdivision % 3 + 1
+    local next_subdivision = (current_subdivision % 3) + 1
     params:set("delay_subdivision_type", next_subdivision)
+
+    local subdivision_name = ""
+    if next_subdivision == 1 then
+      subdivision_name = "--"
+    elseif next_subdivision == 2 then
+      subdivision_name = "•"
+    elseif next_subdivision == 3 then
+      subdivision_name = "3"
+    end
+    print("Subdivision Name: " .. subdivision_name)
+    set_show_info_banner(subdivision_name)
   end
 end
 

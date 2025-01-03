@@ -36,6 +36,8 @@ utils.delay_divisions_as_strings = {
     "1/32", "1/16", "1/8", "1/4", "1/2", "1"
 }
 
+utils.delay_subdivision_types = { "Straight", "Dotted", "Triplet" }
+
 -- Utilsity function for parameter clamping
 function utils.clamp(value, min, max)
     return math.max(min, math.min(max, value))
