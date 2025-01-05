@@ -186,7 +186,7 @@ function randomization_params()
   params:add_taper("random_fifth", "Randomize Fifth", 0, 1, 0, 0)
   params:set_action("random_fifth", function(value) engine.randomFith(value) end)
 
-  params:add_option("random_scale", "Random Scale", utils.scale_names, 2)
+  params:add_option("random_scale", "Random Scale", utils.scale_names, 7)
 
   params:add_taper("random_pan", "Randomize Pan", 0, 1, 0, 0)
   params:set_action("random_pan", function(value) engine.randomPan(value) end)
@@ -542,7 +542,6 @@ function handle_tape_recorder_key(n, z)
       -- Toggle Record
       if params:get("sample_or_record") == 1 then
         params:set("record", 1 - params:get("record"))
-        -- set_show_info_banner(params:get("record") == 1 and "REC" or "STOP", "center")
       else
         fileselect_active = true
         fileselect.enter(_path.audio, file_select_callback, "audio")
@@ -553,16 +552,26 @@ end
 
 function handle_voice_screen_key(n, z)
   if n == 2 and z == 1 then
-    -- Check if we're on the "Random Octave" screen
     if selected_voice_screen == 4 then
-      -- Toggle through random scales
-      local current_scale = params:get("random_scale")
-      local next_scale = (current_scale % #utils.scale_names) + 1
-      params:set("random_scale", next_scale)
+      if shift then
+        -- Shift + Key 2: Toggle backwards through random scales
+        local current_scale = params:get("random_scale")
+        local prev_scale = (current_scale - 2) % #utils.scale_names + 1
+        params:set("random_scale", prev_scale)
 
-      -- Show info banner with the name of the selected scale
-      local scale_name = utils.scale_names[next_scale]
-      set_show_info_banner(scale_name)
+        -- Show info banner with the name of the selected scale
+        local scale_name = utils.scale_names[prev_scale]
+        set_show_info_banner(scale_name)
+      else
+        -- Toggle forward through random scales
+        local current_scale = params:get("random_scale")
+        local next_scale = (current_scale % #utils.scale_names) + 1
+        params:set("random_scale", next_scale)
+
+        -- Show info banner with the name of the selected scale
+        local scale_name = utils.scale_names[next_scale]
+        set_show_info_banner(scale_name)
+      end
     else
       -- Toggle Play/Stop
       params:set("play_stop", 1 - params:get("play_stop"))
