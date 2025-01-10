@@ -504,24 +504,35 @@ function key(n, z)
 end
 
 function handle_delay_screen_key(n, z)
-  if n == 2 and z == 1 then
-    params:set("delay_sync", 1 - params:get("delay_sync"))
-    local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
-    set_show_info_banner(sync_state)
-  elseif n == 3 and z == 1 then
-    local current_subdivision = params:get("delay_subdivision_type")
-    local next_subdivision = (current_subdivision % 3) + 1
-    params:set("delay_subdivision_type", next_subdivision)
-
-    local subdivision_name = ""
-    if next_subdivision == 1 then
-      subdivision_name = "--"
-    elseif next_subdivision == 2 then
-      subdivision_name = "•"
-    elseif next_subdivision == 3 then
-      subdivision_name = "3"
+  if z == 1 then
+    if n == 2 then
+      -- Check if the info banner is already shown for "Sync"
+      if show_info_banner then
+        -- Update Sync value and toggle it
+        params:set("delay_sync", 1 - params:get("delay_sync"))
+        local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
+        set_show_info_banner(sync_state)
+      else
+        -- Show the current Sync state
+        local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
+        set_show_info_banner(sync_state)
+      end
+    elseif n == 3 then
+      -- Check if the info banner is already shown for "Subdivision"
+      if show_info_banner then
+        -- Update Subdivision value and toggle it
+        local current_subdivision = params:get("delay_subdivision_type")
+        local next_subdivision = (current_subdivision % 3) + 1
+        params:set("delay_subdivision_type", next_subdivision)
+        local subdivision_name = next_subdivision == 1 and "--" or (next_subdivision == 2 and "•" or "3")
+        set_show_info_banner(subdivision_name)
+      else
+        -- Show the current Subdivision state
+        local current_subdivision = params:get("delay_subdivision_type")
+        local subdivision_name = current_subdivision == 1 and "--" or (current_subdivision == 2 and "•" or "3")
+        set_show_info_banner(subdivision_name)
+      end
     end
-    set_show_info_banner(subdivision_name)
   end
 end
 
@@ -651,26 +662,54 @@ function handle_pan_amp_enc(n, delta)
 end
 
 function handle_delay_screen_enc(n, delta)
-  if shift then
-    if n == 2 then
-      params:delta("delay_mix", delta)
-      set_show_info_banner("Mix: " .. params:get("delay_mix") * 100 .. "%")
-    elseif n == 3 then
-      params:delta("rotate", delta)
-      set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
-    end
-  else
-    if n == 2 then
-      if params:get("delay_sync") == 1 then
-        params:delta("delay_division", delta)
-        set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
+  if n == 2 then
+    if shift then
+      if show_info_banner then
+        -- Update Mix value
+        params:delta("delay_mix", delta)
+        set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
       else
-        params:delta("delay_time", delta)
-        set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+        -- Show current Mix value
+        set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
       end
-    elseif n == 3 then
-      params:delta("delay_feedback", delta)
-      set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+    else
+      if show_info_banner then
+        -- Update delay division or time based on sync
+        if params:get("delay_sync") == 1 then
+          params:delta("delay_division", delta)
+          set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
+        else
+          params:delta("delay_time", delta)
+          set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+        end
+      else
+        -- Show current delay division or time
+        if params:get("delay_sync") == 1 then
+          set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
+        else
+          set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+        end
+      end
+    end
+  elseif n == 3 then
+    if shift then
+      if show_info_banner then
+        -- Update Rotate value
+        params:delta("rotate", delta)
+        set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
+      else
+        -- Show current Rotate value
+        set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
+      end
+    else
+      if show_info_banner then
+        -- Update Feedback value
+        params:delta("delay_feedback", delta)
+        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+      else
+        -- Show current Feedback value
+        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+      end
     end
   end
 end

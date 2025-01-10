@@ -498,9 +498,13 @@ Engine_Rounds : CroneEngine {
 		recordBufferR.free;
 		simpleBuffer.free;
 		recorder.free;
+		delayBus.free;
+		trigBus.free;
+
 		
         pg.free;
         warpDelay.free;
+		
     }
 }
 
