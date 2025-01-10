@@ -521,7 +521,6 @@ function handle_delay_screen_key(n, z)
     elseif next_subdivision == 3 then
       subdivision_name = "3"
     end
-    print("Subdivision Name: " .. subdivision_name)
     set_show_info_banner(subdivision_name)
   end
 end
@@ -554,19 +553,14 @@ function handle_voice_screen_key(n, z)
   if n == 2 and z == 1 then
     if selected_voice_screen == 4 then
       if shift then
-        -- Shift + Key 2: Toggle backwards through random scales
-        local current_scale = params:get("random_scale")
-        local prev_scale = (current_scale - 2) % #utils.scale_names + 1
-        params:set("random_scale", prev_scale)
-
         -- Show info banner with the name of the selected scale
         local scale_name = utils.scale_names[prev_scale]
         set_show_info_banner(scale_name)
       else
         -- Toggle forward through random scales
-        local current_scale = params:get("random_scale")
-        local next_scale = (current_scale % #utils.scale_names) + 1
-        params:set("random_scale", next_scale)
+        -- local current_scale = params:get("random_scale")
+        -- local next_scale = (current_scale % #utils.scale_names) + 1
+        -- params:set("random_scale", next_scale)
 
         -- Show info banner with the name of the selected scale
         local scale_name = utils.scale_names[next_scale]
@@ -660,8 +654,10 @@ function handle_delay_screen_enc(n, delta)
   if shift then
     if n == 2 then
       params:delta("delay_mix", delta)
+      set_show_info_banner("Mix: " .. params:get("delay_mix") * 100 .. "%")
     elseif n == 3 then
       params:delta("rotate", delta)
+      set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
     end
   else
     if n == 2 then
@@ -670,22 +666,38 @@ function handle_delay_screen_enc(n, delta)
         set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
       else
         params:delta("delay_time", delta)
-        set_show_info_banner(params:get("delay_time"))
+        set_show_info_banner(string.format("%.2f", params:get("delay_time")))
       end
     elseif n == 3 then
       params:delta("delay_feedback", delta)
-      set_show_info_banner('FB: ' .. params:get("delay_feedback"))
+      set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
     end
   end
 end
 
 function handle_fifth_octave_enc(n, delta)
   if shift then
-    if n == 2 then utils.handle_param_change("semitones", delta, -24, 24, 1, "lin") end
-    set_show_info_banner(params:get("semitones"))
+    if n == 2 then
+      -- Adjust semitones and show updated value in the banner
+      utils.handle_param_change("semitones", delta, -24, 24, 1, "lin")
+      set_show_info_banner("Semitones: " .. params:get("semitones"))
+    elseif n == 3 then
+      -- Adjust scales without wrapping
+      local current_scale = params:get("random_scale")
+      local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
+      if next_scale ~= current_scale then
+        params:set("random_scale", next_scale)
+        set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
+      end
+    end
   else
-    if n == 2 then utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
-    if n == 3 then utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
+    if n == 2 then
+      -- Adjust random fifth strength
+      utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin")
+    elseif n == 3 then
+      -- Adjust random octave strength
+      utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin")
+    end
   end
 end
 
