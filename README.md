@@ -56,11 +56,10 @@
 
 ### Screen 4
 
-- **Enc 2**: Random Scale
+- **Enc 2**: Random Note
 - **Enc 3**: Random Octave
 - **Enc 2 + Shift**: Pitch in Semitones
-
-- **Button 2**: Toggle between Scales 
+- **Enc 3 + Shift**: Set Scale for Random Note   
 
 
 ### Screen 5
@@ -83,12 +82,12 @@
 
 - **Button 2**: Toggle between delay sync/unsync.
 - **Button 3**: Toggle between straight/dotted/thirds
-  
+
 
 ## Record Screen
 
-- **Enc 2**: Adjust recording buffer length (in beats).
+- **Enc 2**: Adjust recording buffer length (in beats)
   
-- **Button 2**: Toggle between record and sample mode.
-- **Button 3**: Start/stop recording.
-- **Button 3 + Shift**: Arm recording (recording will start when playback begins).
+- **Button 2**: Toggle between record and sample mode
+- **Button 3**: Start/stop recording
+- **Button 3 + Shift**: Arm recording (recording will start when playback begins, which allows to sync recording and playback )
