@@ -186,7 +186,7 @@ function randomization_params()
   params:add_taper("random_fifth", "Randomize Fifth", 0, 1, 0, 0)
   params:set_action("random_fifth", function(value) engine.randomFith(value) end)
 
-  params:add_option("random_scale", "Random Scale", utils.scale_names, 7)
+  params:add_option("random_scale", "Random Scale", utils.scale_names, 8)
 
   params:add_taper("random_pan", "Randomize Pan", 0, 1, 0, 0)
   params:set_action("random_pan", function(value) engine.randomPan(value) end)
@@ -715,25 +715,38 @@ function handle_delay_screen_enc(n, delta)
 end
 
 function handle_fifth_octave_enc(n, delta)
-  if shift then
-    if n == 2 then
-      -- Adjust semitones and show updated value in the banner
-      utils.handle_param_change("semitones", delta, -24, 24, 1, "lin")
-      set_show_info_banner("Semitones: " .. params:get("semitones"))
-    elseif n == 3 then
-      -- Adjust scales without wrapping
-      local current_scale = params:get("random_scale")
-      local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
-      if next_scale ~= current_scale then
-        params:set("random_scale", next_scale)
-        set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
+  if n == 2 then
+    if shift then
+      -- Handle semitones adjustment with preview and update
+      if show_info_banner then
+        -- Update semitones value
+        utils.handle_param_change("semitones", delta, -24, 24, 1, "lin")
+        set_show_info_banner("Semitones: " .. params:get("semitones"))
+      else
+        -- Show current semitones value
+        set_show_info_banner("Semitones: " .. params:get("semitones"))
       end
-    end
-  else
-    if n == 2 then
+    else
       -- Adjust random fifth strength
       utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin")
-    elseif n == 3 then
+    end
+  elseif n == 3 then
+    if shift then
+      -- Handle random scale adjustment with preview and update
+      if show_info_banner then
+        -- Update random scale value
+        local current_scale = params:get("random_scale")
+        local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
+        if next_scale ~= current_scale then
+          params:set("random_scale", next_scale)
+          set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
+        end
+      else
+        -- Show current random scale value
+        local current_scale = params:get("random_scale")
+        set_show_info_banner("Scale: " .. utils.scale_names[current_scale])
+      end
+    else
       -- Adjust random octave strength
       utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin")
     end
