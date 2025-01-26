@@ -20,16 +20,11 @@
 
 ## Controls
 
-### Key Functions
-
-- **Key 1**: Shift
-- **Key 2**: Play/Stop
-- **Key 3**: Load Sample (on Voice Screen 1)
 
 ### Encoder Functions
 
 - **Enc 1**: Change Voice Screen
-- **Enc 1 + Shift**: Switch between Voice and FX screens
+- **Enc 1 + Shift**: Switch between Record, Voice and FX screens
 
 ---
 
@@ -41,6 +36,10 @@
 - **Enc 3**: Change Beat Length
 - **Enc 2 + Shift**: Set Playback Direction
 - **Enc 3 + Shift**: Set Steps
+
+- **Key 1**: Shift
+- **Key 2**: Play/Stop
+- **Key 3**: Load Sample (on Voice Screen 1)
 
 ### Screen 2
 
