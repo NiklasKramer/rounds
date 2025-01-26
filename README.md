@@ -20,16 +20,11 @@
 
 ## Controls
 
-### Key Functions
-
-- **Key 1**: Shift
-- **Key 2**: Play/Stop
-- **Key 3**: Load Sample (on Voice Screen 1)
 
 ### Encoder Functions
 
 - **Enc 1**: Change Voice Screen
-- **Enc 1 + Shift**: Switch between Voice and FX screens
+- **Enc 1 + Shift**: Switch between Record, Voice and FX screens
 
 ---
 
@@ -41,6 +36,10 @@
 - **Enc 3**: Change Beat Length
 - **Enc 2 + Shift**: Set Playback Direction
 - **Enc 3 + Shift**: Set Steps
+
+- **Key 1**: Shift
+- **Key 2**: Play/Stop
+- **Key 3**: Load Sample (on Voice Screen 1)
 
 ### Screen 2
 
@@ -56,9 +55,11 @@
 
 ### Screen 4
 
-- **Enc 2**: Random Fifth
+- **Enc 2**: Random Note
 - **Enc 3**: Random Octave
 - **Enc 2 + Shift**: Pitch in Semitones
+- **Enc 3 + Shift**: Set Scale for Random Note   
+
 
 ### Screen 5
 
@@ -77,3 +78,15 @@
 - **Enc 3**: Feedback
 - **Enc 2 + Shift**: Mix
 - **Enc 3 + Shift**: Rotate
+
+- **Button 2**: Toggle between delay sync/unsync.
+- **Button 3**: Toggle between straight/dotted/thirds
+
+
+## Record Screen
+
+- **Enc 2**: Adjust recording buffer length (in beats)
+  
+- **Button 2**: Toggle between record and sample mode
+- **Button 3**: Start/stop recording
+- **Button 3 + Shift**: Arm recording (recording will start when playback begins, which allows to sync recording and playback )

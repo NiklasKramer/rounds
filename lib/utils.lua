@@ -17,6 +17,38 @@ utils.patterns = {
     { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0 }, { 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 }
 }
 
+utils.scales = {
+    ["← 6"] = { 5, 10, 3, 8, 1, 6 }, -- Backward scales
+    ["← 5"] = { 5, 10, 3, 8, 1 },
+    ["← 4"] = { 5, 10, 3, 8 },
+    ["← 3"] = { 5, 10, 3 },
+    ["← 2"] = { 5, 10 },
+    ["← 1"] = { 5 },
+    ["→ 0 ←"] = { 0 },
+    ["→ 1"] = { 7 }, -- Forward scales
+    ["→ 2"] = { 7, 2 },
+    ["→ 3"] = { 7, 2, 9 },
+    ["→ 4"] = { 7, 2, 9, 4 },
+    ["→ 5"] = { 7, 2, 9, 4, 11 },
+    ["→ 6"] = { 7, 2, 9, 4, 11, 6 }
+}
+
+utils.scale_names = {
+    "← 6",
+    "← 5",
+    "← 4",
+    "← 3",
+    "← 2",
+    "← 1",
+    "→ 0 ←",
+    "→ 1",
+    "→ 2",
+    "→ 3",
+    "→ 4",
+    "→ 5",
+    "→ 6"
+}
+
 -- Division factors for timing
 utils.division_factors = {
     [1] = 1, [2] = 1 / 2, [3] = 1 / 4, [4] = 1 / 8, [5] = 1 / 16, [6] = 1 / 32
@@ -24,26 +56,19 @@ utils.division_factors = {
 
 -- Division factors for timing
 utils.delay_division_factors = {
-    1,
-    3 / 4,  -- dotted half
-    1 / 2,  -- half
-    3 / 8,  -- dotted quarter
-    1 / 3,  -- 1/4 note triplet
-    1 / 4,  -- quarter note
-    3 / 16, -- dotted 1/8
-    1 / 6,  -- 1/8 note triplet
-    1 / 8,  -- 1/8 note
-    3 / 32, -- dotted 1/16
-    1 / 12, -- 1/16 note triplet
+    1 / 32, -- 1/32 note
     1 / 16, -- 1/16 note
-    3 / 64, -- dotted 1/32
-    1 / 24, -- 1/32 note triplet
-    1 / 32  -- 1/32 note
+    1 / 8,  -- 1/8 note
+    1 / 4,  -- quarter note
+    1 / 2,  -- half
+    1       -- whole note
 }
 
 utils.delay_divisions_as_strings = {
-    "1", "3/4", "1/2", "3/8", "1/3", "1/4", "3/16", "1/6", "1/8", "3/32", "1/12", "1/16", "3/64", "1/24", "1/32"
+    "1/32", "1/16", "1/8", "1/4", "1/2", "1"
 }
+
+utils.delay_subdivision_types = { "Straight", "Dotted", "Triplet" }
 
 -- Utilsity function for parameter clamping
 function utils.clamp(value, min, max)

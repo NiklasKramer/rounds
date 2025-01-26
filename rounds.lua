@@ -1,4 +1,5 @@
--- rounds is a clocked sample manipulation environment
+-- rounds is a clocked sample
+-- manipulation environment
 
 engine.name = 'Rounds'
 
@@ -14,20 +15,28 @@ screens = include('lib/screens')
 local screen_w, screen_h = 128, 64
 local circle_x, circle_y = screen_w / 2, screen_h / 2
 
+record_pointer = 0
+
 
 local selected_voice_screen = 1
 local number_of_screens = 5
-local screen_mode = 1
+local screen_modes = 3
+local screen_mode = 2
 local shift = false
 local fileselect_active = false
 local selected_file_path = 'none'
+
+local show_info_banner = false
+local metro_info_banner
+local info_banner_text = ""
 
 -- Step and Pattern Configuration
 local steps = 16
 local active_step = 0
 
 -- Timing and Clock
-local clock_id = 0
+local play_clock_id = 0
+local reocord_clock_id = 0
 
 -- Envelope and Filter Graphics
 local env_graph
@@ -44,6 +53,7 @@ function init()
   init_filter_graph()
 
   update_delay_time()
+  update_record_time()
 
   g.key = function(x, y, z)
     grid_key(x, y, z)
@@ -53,10 +63,34 @@ end
 function init_polls()
   metro_screen_refresh = metro.init(function(stage) redraw() end, 1 / 60)
   metro_screen_refresh:start()
+
+  record_pointer_poll = poll.set('recorderPos', function(value)
+    if params:get("record") == 1 then
+      record_pointer = value
+    else
+      record_pointer = 0
+    end
+  end)
+  record_pointer_poll.time = 0.05
+  record_pointer_poll:start()
+
+  metro_info_banner = metro.init(function(stage)
+    show_info_banner = false
+    redraw()
+  end, 0.6)
 end
 
 function init_params()
   params:add_separator("Rounds")
+  global_params()
+  recording_params()
+  filter_params()
+  randomization_params()
+  delay_params()
+  steps_as_params()
+end
+
+function global_params()
   params:add_group("Global", 7)
   params:add_file("sample", "Sample")
   params:set_action("sample", function(file) engine.bufferPath(file) end)
@@ -64,18 +98,17 @@ function init_params()
   params:add_binary("play_stop", "Play/Stop", "toggle", 0)
   params:set_action("play_stop", function(value)
     if value == 1 then
-      clock_id = clock.run(start_sequence)
+      play_clock_id = clock.run(start_sequence)
     else
-      clock.cancel(clock_id)
+      clock.cancel(play_clock_id)
     end
   end)
 
   params:add_option("step_division", "Step Division", utils.division_factors, 4)
 
-  params:add_option("steps", "Steps", { 4, 8, 16, 32, 64 }, 3)
+  params:add_number("steps", "Steps", 1, 64, 16)
   params:set_action("steps", function(value)
-    steps = ({ 4, 8, 16, 32, 64 })[value]
-    engine.steps(steps)
+    engine.steps(value)
   end)
 
   params:add_number("pattern", "Pattern", 1, #utils.patterns, 1)
@@ -86,7 +119,36 @@ function init_params()
   end)
 
   params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
+end
 
+function recording_params()
+  params:add_group("Record", 4)
+
+  params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
+  params:set_action('sample_or_record', function(value)
+    params:set("record", 0)
+    engine.sampleOrRecord(value)
+  end)
+
+  params:add_binary('record', 'Record', 'toggle', 0)
+  params:set_action('record', function(value)
+    if value == 1 then
+      record_clock_id = clock.run(start_recording)
+    else
+      clock.cancel(record_clock_id)
+      engine.record(0)
+    end
+  end)
+
+  params:add_binary('arm_record', 'Arm Record', 'toggle', 0)
+
+  params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
+  params:set_action('loop_length_in_beats', function(value)
+    update_record_time()
+  end)
+end
+
+function filter_params()
   params:add_group("Envelope/Filter", 7)
   params:add_binary("env", "Enable Envelope", "toggle", 1)
   params:set_action("env", function(value) engine.useEnv(value) end)
@@ -114,13 +176,17 @@ function init_params()
 
   params:add_taper("lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
   params:set_action("lowpass_env_strength", function(value) engine.lowpassEnvStrength(value) end)
+end
 
-  params:add_group("Randomization", 9)
+function randomization_params()
+  params:add_group("Randomization", 10)
   params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
   params:set_action("random_octave", function(value) engine.randomOctave(value) end)
 
   params:add_taper("random_fifth", "Randomize Fifth", 0, 1, 0, 0)
   params:set_action("random_fifth", function(value) engine.randomFith(value) end)
+
+  params:add_option("random_scale", "Random Scale", utils.scale_names, 8)
 
   params:add_taper("random_pan", "Randomize Pan", 0, 1, 0, 0)
   params:set_action("random_pan", function(value) engine.randomPan(value) end)
@@ -142,20 +208,22 @@ function init_params()
 
   params:add_taper('random_highpass', 'Randomize Highpass', 0, 1, 0, 0)
   params:set_action('random_highpass', function(value) engine.randomHiPass(value) end)
-
-  init_delay_params()
-  init_steps_as_params()
 end
 
-function init_delay_params()
-  params:add_group("Delay", 10)
+function delay_params()
+  params:add_group("Delay", 11)
 
-  params:add_taper("delay_mix", "Mix", 0, 1, 0.5, 0)
+  params:add_taper("delay_mix", "Mix", 0, 1, 0.2, 0)
   params:set_action("delay_mix", function(value) engine.mix(value) end)
 
   params:add_binary('delay_sync', 'Sync', 'toggle', 1)
 
-  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 9)
+  params:add_option("delay_subdivision_type", "Subdivision Type", { "Straight", "Dotted", "Triplet" }, 1)
+  params:set_action("delay_subdivision_type", function(value)
+    update_delay_time()
+  end)
+
+  params:add_option("delay_division", "Division", utils.delay_divisions_as_strings, 4)
   params:set_action("delay_division", function(value)
     update_delay_time()
   end)
@@ -186,7 +254,7 @@ function init_delay_params()
   params:set_action("rotate", function(value) engine.rotate(value) end)
 end
 
-function init_steps_as_params()
+function steps_as_params()
   params:add_separator("Steps")
   for i = 1, 64 do
     params:add_group("step_" .. i, 7)
@@ -212,14 +280,11 @@ function redraw()
   if fileselect_active then return end
   screen.clear()
 
+  -- Draw the main screen components
   screens.draw_mode_indicator(screen_mode)
 
-  if screen_mode == 1 then
+  if screen_mode == 2 then
     screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
-  end
-
-  -- Draw content based on the selected screen
-  if screen_mode == 1 then
     if selected_voice_screen == 1 then
       screens.draw_step_circle(steps, active_step)
     elseif selected_voice_screen == 2 then
@@ -231,11 +296,85 @@ function redraw()
     elseif selected_voice_screen == 5 then
       draw_filter_screen()
     end
-  elseif screen_mode == 2 then
+  elseif screen_mode == 3 then
     screens.draw_delay_screen()
+  elseif screen_mode == 1 then
+    screens.draw_tape_recorder(record_pointer)
+  end
+
+  -- Draw the info banner if active
+  if show_info_banner then
+    draw_info_banner()
   end
 
   screen.update()
+end
+
+local banner_position = "bottom_center" -- Default position
+
+function set_show_info_banner(message, position)
+  if message and message ~= "" then
+    info_banner_text = message
+    show_info_banner = true
+
+    -- Set the position if provided
+    if position then
+      banner_position = position
+    end
+
+    metro_info_banner:stop()
+    metro_info_banner:start()
+    redraw()
+  else
+    print("Warning: Attempted to show an empty info banner.")
+  end
+end
+
+function draw_info_banner()
+  if not show_info_banner then return end
+
+  local min_banner_width = 40
+  local padding = 5
+  local banner_height = 10
+
+  -- Measure the text width
+  local text_width = screen.text_extents(info_banner_text)
+  local banner_width = math.max(text_width + padding, min_banner_width)
+
+  local banner_x, banner_y
+
+  -- Calculate banner position based on selected option
+  if banner_position == "center" then
+    banner_x = (screen_w - banner_width) / 2
+    banner_y = (screen_h - banner_height) / 2
+  elseif banner_position == "top_left" then
+    banner_x = 2
+    banner_y = 2
+  elseif banner_position == "top_right" then
+    banner_x = screen_w - banner_width - 2
+    banner_y = 2
+  elseif banner_position == "bottom_center" then
+    banner_x = (screen_w - banner_width) / 2
+    banner_y = screen_h - banner_height - 2
+  else
+    print("Unknown banner position: " .. banner_position)
+    return
+  end
+
+  -- Draw banner background
+  screen.level(1) -- Dim background level
+  screen.rect(banner_x, banner_y, banner_width, banner_height)
+  screen.fill()
+
+  -- Draw banner text
+  screen.level(15)
+  screen.font_face(1)
+  screen.font_size(8)
+  local text_x = banner_x + (banner_width - text_width) / 2
+  local text_y = banner_y + banner_height - 3
+
+  screen.move(text_x, text_y)
+  screen.text(info_banner_text)
 end
 
 function draw_filter_screen()
@@ -353,11 +492,98 @@ end
 function key(n, z)
   if n == 1 then
     shift = (z == 1)
-  elseif n == 2 and z == 1 then
-    local current_state = params:get("play_stop")
-    params:set("play_stop", 1 - current_state)
+  else
+    if screen_mode == 1 then
+      handle_tape_recorder_key(n, z)
+    elseif screen_mode == 2 then
+      handle_voice_screen_key(n, z)
+    elseif screen_mode == 3 then
+      handle_delay_screen_key(n, z)
+    end
+  end
+end
+
+function handle_delay_screen_key(n, z)
+  if z == 1 then
+    if n == 2 then
+      -- Check if the info banner is already shown for "Sync"
+      if show_info_banner then
+        -- Update Sync value and toggle it
+        params:set("delay_sync", 1 - params:get("delay_sync"))
+        local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
+        set_show_info_banner(sync_state)
+      else
+        -- Show the current Sync state
+        local sync_state = params:get("delay_sync") == 1 and "SYNC" or "FREE"
+        set_show_info_banner(sync_state)
+      end
+    elseif n == 3 then
+      -- Check if the info banner is already shown for "Subdivision"
+      if show_info_banner then
+        -- Update Subdivision value and toggle it
+        local current_subdivision = params:get("delay_subdivision_type")
+        local next_subdivision = (current_subdivision % 3) + 1
+        params:set("delay_subdivision_type", next_subdivision)
+        local subdivision_name = next_subdivision == 1 and "--" or (next_subdivision == 2 and "•" or "3")
+        set_show_info_banner(subdivision_name)
+      else
+        -- Show the current Subdivision state
+        local current_subdivision = params:get("delay_subdivision_type")
+        local subdivision_name = current_subdivision == 1 and "--" or (current_subdivision == 2 and "•" or "3")
+        set_show_info_banner(subdivision_name)
+      end
+    end
+  end
+end
+
+function handle_tape_recorder_key(n, z)
+  if n == 2 and z == 1 then
+    -- Toggle Record Mode On/Off
+    params:set("sample_or_record", 1 - params:get("sample_or_record"))
+    set_show_info_banner(params:get("sample_or_record") == 1 and "REC MODE" or "SAMPLE MODE", "center")
   elseif n == 3 and z == 1 then
-    if selected_voice_screen == 1 then
+    if shift then
+      -- Shift + Button 3: Toggle Arm Record
+      if params:get("sample_or_record") == 1 then
+        params:set("arm_record", 1 - params:get("arm_record"))
+        set_show_info_banner(params:get("arm_record") == 1 and "ARM ON" or "ARM OFF", "center")
+      end
+    else
+      -- Toggle Record
+      if params:get("sample_or_record") == 1 then
+        params:set("record", 1 - params:get("record"))
+      else
+        fileselect_active = true
+        fileselect.enter(_path.audio, file_select_callback, "audio")
+      end
+    end
+  end
+end
+
+function handle_voice_screen_key(n, z)
+  if n == 2 and z == 1 then
+    if selected_voice_screen == 4 then
+      if shift then
+        -- Show info banner with the name of the selected scale
+        local scale_name = utils.scale_names[prev_scale]
+        set_show_info_banner(scale_name)
+      else
+        -- Toggle forward through random scales
+        -- local current_scale = params:get("random_scale")
+        -- local next_scale = (current_scale % #utils.scale_names) + 1
+        -- params:set("random_scale", next_scale)
+
+        -- Show info banner with the name of the selected scale
+        local scale_name = utils.scale_names[next_scale]
+        set_show_info_banner(scale_name)
+      end
+    else
+      -- Toggle Play/Stop
+      params:set("play_stop", 1 - params:get("play_stop"))
+    end
+  elseif n == 3 and z == 1 then
+    -- Handle file selection or pattern change logic
+    if selected_voice_screen == 1 and params:get("sample_or_record") == 0 then
       fileselect_active = true
       fileselect.enter(_path.audio, file_select_callback, "audio")
     end
@@ -367,14 +593,15 @@ end
 function enc(n, delta)
   if n == 1 then
     if shift then
-      screen_mode = utils.clamp(screen_mode + delta, 1, 2)
+      screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes) -- Updated range
     else
-      if screen_mode == 1 then
+      if screen_mode == 2 then
         selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
       end
     end
   else
-    if screen_mode == 1 then
+    -- Delegate to screen-specific handlers
+    if screen_mode == 2 then
       if selected_voice_screen == 1 then
         handle_step_circle_enc(n, delta)
       elseif selected_voice_screen == 2 then
@@ -386,8 +613,10 @@ function enc(n, delta)
       elseif selected_voice_screen == 5 then
         handle_filter_enc(n, delta)
       end
-    elseif screen_mode == 2 then
+    elseif screen_mode == 3 then
       handle_delay_screen_enc(n, delta)
+    elseif screen_mode == 1 then
+      handle_record_enc(n, delta) -- Handle tape recorder interactions
     end
   end
 end
@@ -433,31 +662,94 @@ function handle_pan_amp_enc(n, delta)
 end
 
 function handle_delay_screen_enc(n, delta)
-  if shift then
-    if n == 2 then
-      params:delta("delay_mix", delta)
-    elseif n == 3 then
-      params:delta("rotate", delta)
-    end
-  else
-    if n == 2 then
-      if params:get("delay_sync") == 1 then
-        params:delta("delay_division", delta)
+  if n == 2 then
+    if shift then
+      if show_info_banner then
+        -- Update Mix value
+        params:delta("delay_mix", delta)
+        set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
       else
-        params:delta("delay_time", delta)
+        -- Show current Mix value
+        set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
       end
-    elseif n == 3 then
-      params:delta("delay_feedback", delta)
+    else
+      if show_info_banner then
+        -- Update delay division or time based on sync
+        if params:get("delay_sync") == 1 then
+          params:delta("delay_division", delta)
+          set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
+        else
+          params:delta("delay_time", delta)
+          set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+        end
+      else
+        -- Show current delay division or time
+        if params:get("delay_sync") == 1 then
+          set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
+        else
+          set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+        end
+      end
+    end
+  elseif n == 3 then
+    if shift then
+      if show_info_banner then
+        -- Update Rotate value
+        params:delta("rotate", delta)
+        set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
+      else
+        -- Show current Rotate value
+        set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
+      end
+    else
+      if show_info_banner then
+        -- Update Feedback value
+        params:delta("delay_feedback", delta)
+        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+      else
+        -- Show current Feedback value
+        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+      end
     end
   end
 end
 
 function handle_fifth_octave_enc(n, delta)
-  if shift then
-    if n == 2 then utils.handle_param_change("semitones", delta, -24, 24, 1, "lin") end
-  else
-    if n == 2 then utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin") end
-    if n == 3 then utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin") end
+  if n == 2 then
+    if shift then
+      -- Handle semitones adjustment with preview and update
+      if show_info_banner then
+        -- Update semitones value
+        utils.handle_param_change("semitones", delta, -24, 24, 1, "lin")
+        set_show_info_banner("Semitones: " .. params:get("semitones"))
+      else
+        -- Show current semitones value
+        set_show_info_banner("Semitones: " .. params:get("semitones"))
+      end
+    else
+      -- Adjust random fifth strength
+      utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin")
+    end
+  elseif n == 3 then
+    if shift then
+      -- Handle random scale adjustment with preview and update
+      if show_info_banner then
+        -- Update random scale value
+        local current_scale = params:get("random_scale")
+        local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
+        if next_scale ~= current_scale then
+          params:set("random_scale", next_scale)
+          set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
+        end
+      else
+        -- Show current random scale value
+        local current_scale = params:get("random_scale")
+        set_show_info_banner("Scale: " .. utils.scale_names[current_scale])
+      end
+    else
+      -- Adjust random octave strength
+      utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin")
+    end
   end
 end
 
@@ -478,6 +770,16 @@ function handle_filter_enc(n, delta)
       utils.handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
       update_filter_graph()
     end
+  end
+end
+
+function handle_record_enc(n, delta)
+  if n == 2 then
+    print("loop_length_in_beats", params:get("loop_length_in_beats"))
+    -- Adjust loop length in beats using encoder 2
+    params:delta("loop_length_in_beats", delta)
+  elseif n == 3 then
+    -- Reserved for additional encoder 3 functionality if needed
   end
 end
 
@@ -508,11 +810,25 @@ end
 
 function clock.tempo_change_handler()
   update_delay_time()
+  update_record_time()
+end
+
+function start_recording()
+  params:set("arm_record", 0)
+  local step_division = params:get("step_division")
+  local division_factor = utils.division_factors[step_division]
+  clock.sync(division_factor * 4)
+  engine.record(1)
 end
 
 function start_sequence()
   local i = 1
   local pattern_index = 1
+
+  if (params:get('arm_record') == 1) and (params:get('sample_or_record') == 1) then
+    params:set('record', 1)
+    params:set('arm_record', 0)
+  end
 
   while true do
     local current_pattern = utils.patterns[params:get("pattern")]
@@ -534,10 +850,31 @@ function start_sequence()
       local active = params:get("active_" .. index) == 1
       if active then
         local start_segment = params:get("segment" .. index)
-        local rate = params:get("rate" .. index)
         local reverse = params:get("reverse" .. index)
         local amp = params:get("amp" .. index)
         local pan = params:get("pan" .. index)
+
+        -- Base semitones
+        local semitones = params:get("semitones")
+
+        -- Apply random scale note
+        local scale_index = params:get("random_scale")
+        local scale_name = utils.scale_names[scale_index]
+        local selected_scale = utils.scales[scale_name]
+
+        if selected_scale and math.random() < params:get("random_fifth") then
+          local scale_add = selected_scale[math.random(1, #selected_scale)]
+          semitones = semitones + scale_add
+        end
+
+        -- Apply random octave
+        if math.random() < params:get("random_octave") then
+          semitones = semitones + 12
+        end
+
+        -- Calculate playback rate
+        local rate = math.pow(2, semitones / 12)
+
         engine.play(start_segment, amp, rate, pan, reverse)
 
         local step_division = params:get("step_division")
@@ -559,13 +896,31 @@ function start_sequence()
 end
 
 function update_delay_time()
-  local beat_sec = clock.get_beat_sec()
+  local bpm = clock.get_tempo() -- Get the current BPM
+  print("bpm: " .. bpm)
+
   local division_factor = utils.delay_division_factors[params:get("delay_division")]
-  local delay_time = beat_sec * division_factor * 4 -- synced time
+
+  local subdivision_type = params:get("delay_subdivision_type")
+  local subdivision_multiplier = 1 -- Default: Straight
+
+  if subdivision_type == 2 then
+    subdivision_multiplier = 1.5   -- Dotted
+  elseif subdivision_type == 3 then
+    subdivision_multiplier = 2 / 3 -- Triplet
+  end
+
+  local delay_time = (60 / bpm) * division_factor * 4 * subdivision_multiplier
   print("sync delay time: " .. delay_time)
 
   -- Set engine delay if sync is enabled
   if params:get("delay_sync") == 1 then
     engine.delay(delay_time)
   end
+end
+
+function update_record_time()
+  local beat_sec = clock.get_beat_sec()
+  local loop_length = params:get("loop_length_in_beats") * beat_sec
+  engine.loopLength(loop_length)
 end
