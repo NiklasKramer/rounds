@@ -1,4 +1,4 @@
-# rounds
+# rounds 1.2
 
 **rounds** is a clocked sample manipulation environment for **monome norns**.
 
