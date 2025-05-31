@@ -1,3 +1,5 @@
+-- ARC rotary input smoothing buffer
+local arc_buffer = { 0, 0, 0, 0 }
 -- rounds is a clocked sample
 -- manipulation environment
 
@@ -6,11 +8,13 @@ engine.name = 'Rounds'
 local g = grid.connect()
 local EnvGraph = require "envgraph"
 local FilterGraph = require "filtergraph"
-
 local fileselect = require('fileselect')
+local a = arc.connect()
 
 utils = include('lib/utils')
 screens = include('lib/screens')
+arc_utils = include('lib/arc_utils')
+
 
 local screen_w, screen_h = 128, 64
 local circle_x, circle_y = screen_w / 2, screen_h / 2
@@ -22,6 +26,10 @@ local selected_voice_screen = 1
 local number_of_screens = 5
 local screen_modes = 3
 local screen_mode = 2
+-- For arc double-tap detection
+-- For arc long press detection
+local arc_key_hold_time = 0
+local long_press_threshold = 0.5
 local shift = false
 local fileselect_active = false
 local selected_file_path = 'none'
@@ -61,8 +69,13 @@ function init()
 end
 
 function init_polls()
-  metro_screen_refresh = metro.init(function(stage) redraw() end, 1 / 60)
+  metro_screen_refresh = metro.init(function(stage)
+    redraw()
+    arc_redraw()
+  end, 1 / 60)
   metro_screen_refresh:start()
+
+
 
   record_pointer_poll = poll.set('recorderPos', function(value)
     if params:get("record") == 1 then
@@ -87,7 +100,13 @@ function init_params()
   filter_params()
   randomization_params()
   delay_params()
+  arc_params()
   steps_as_params()
+end
+
+function arc_params()
+  params:add_group("Arc", 1)
+  params:add_taper("arc_sensitivity", "Sensitivity", 1, 100, 50)
 end
 
 function global_params()
@@ -624,14 +643,16 @@ end
 function handle_step_circle_enc(n, delta)
   if n == 2 then
     if shift then
-      utils.handle_param_change("direction", delta, 1, 3, 1, "lin")
+      -- Clamp direction between 1 and 3, no wrapping
+      local current = params:get("direction")
+      params:set("direction", utils.clamp(current + delta, 1, 3))
     else
       utils.handle_param_change("pattern", delta, 1, #utils.patterns, 1, "lin")
     end
   elseif n == 3 then
     if shift then
       local new_steps = utils.clamp(steps + delta, 4, 64)
-      params:set("steps", math.log(new_steps) / math.log(2) - 1)
+      params:set("steps", new_steps)
       steps = new_steps
       engine.steps(steps)
     else
@@ -781,6 +802,92 @@ function handle_record_enc(n, delta)
   elseif n == 3 then
     -- Reserved for additional encoder 3 functionality if needed
   end
+end
+
+-- ARC encoder mappings
+a.delta = function(n, delta)
+  local sens = params:get("arc_sensitivity")
+  arc_buffer[n] = arc_buffer[n] + delta / sens
+
+  if math.abs(arc_buffer[n]) >= 1 then
+    local step = math.floor(arc_buffer[n])
+    arc_buffer[n] = arc_buffer[n] - step
+    if n == 1 then
+      enc(2, step)
+    elseif n == 2 then
+      enc(3, step)
+    elseif n == 3 then
+      shift = true
+      enc(2, step)
+      shift = false
+    elseif n == 4 then
+      shift = true
+      enc(3, step)
+      shift = false
+    end
+  end
+end
+
+a.key = function(n, z)
+  if n == 1 then
+    if z == 1 then
+      arc_key_hold_time = util.time()
+    else
+      local hold_duration = util.time() - arc_key_hold_time
+      if hold_duration >= long_press_threshold then
+        -- Long press: toggle screen_mode
+        screen_mode = screen_mode + 1
+        if screen_mode > screen_modes then
+          screen_mode = 1
+        end
+      else
+        -- Short press: advance selected_voice_screen
+        selected_voice_screen = selected_voice_screen + 1
+        if selected_voice_screen > number_of_screens then
+          selected_voice_screen = 1
+        end
+      end
+      redraw()
+    end
+  end
+end
+
+
+-- ARC redraw function for visual fee dback
+function arc_redraw()
+  a:all(0)
+  if screen_mode == 2 then
+    if selected_voice_screen == 1 then
+      arc_utils.display_step_pattern(a, 1, utils.patterns[params:get("pattern")], active_step)
+      arc_utils.display_step_division(a, 2, params:get("step_division"))
+      arc_utils.display_selector(a, 3, params:get("direction"), 3)
+      arc_utils.display_steps(a, 4, params:get("steps"), active_step)
+    elseif selected_voice_screen == 2 then
+      arc_utils.display_spread_pattern(a, 1, params:get("attack"), 0.001, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get("release"), 0.001, 5)
+      arc_utils.display_spread_pattern(a, 3, params:get("random_attack"), 0, 1)
+      arc_utils.display_spread_pattern(a, 4, params:get("random_release"), 0, 1)
+    elseif selected_voice_screen == 3 then
+      arc_utils.display_random_pattern(a, 1, params:get("random_pan"), 0, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get("random_amp"), 0, 1)
+    elseif selected_voice_screen == 4 then
+      arc_utils.display_spread_pattern(a, 1, params:get("random_fifth"), 0, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get("random_octave"), 0, 1)
+      arc_utils.display_panning_value(a, 3, params:get("semitones"), -24, 24)
+      arc_utils.display_selector(a, 4, params:get("random_scale"), 12)
+    elseif selected_voice_screen == 5 then
+      arc_utils.display_exponential_pattern(a, 1, params:get("lowpass_freq"), 10, 20000)
+      arc_utils.display_spread_pattern(a, 2, params:get("resonance"), 0.01, 1)
+      arc_utils.display_progress_bar(a, 3, params:get("lowpass_env_strength"), 0, 1)
+      arc_utils.display_progress_bar(a, 4, params:get("random_lowpass"), 0, 1)
+    end
+  elseif screen_mode == 3 then
+    arc_utils.display_spread_pattern(a, 1, params:get("delay_time"), 0, 8)
+    arc_utils.display_spread_pattern(a, 2, params:get("delay_feedback"), 0, 20)
+    arc_utils.display_progress_bar(a, 3, params:get("delay_mix"), 0, 1)
+    arc_utils.display_progress_bar(a, 4, params:get("rotate"), 0, 1)
+  end
+  a:refresh()
 end
 
 -- FILE SELECT
