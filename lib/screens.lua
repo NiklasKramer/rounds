@@ -119,8 +119,8 @@ function screens.draw_delay_screen()
     end
 end
 
-function screens.draw_step_circle(steps, current_step)
-    draw_step_visual(steps, current_step)
+function screens.draw_step_circle(steps, current_step, track)
+    draw_step_visual(steps, current_step, track)
     draw_direction_symbol()
     draw_step_division()
     draw_step_count(steps)
@@ -342,9 +342,11 @@ function screens.draw_tape_recorder(record_pointer, recording_track)
         screen.fill()
     end
 
-    -- Rotation angle for the spools
+    -- Rotation angle for the spools (speed influenced by loop length)
     local should_spin = params:get(record_param) == 1 or not tape_head_off
-    local rotation_angle = should_spin and (math.pi * 2 * progress + (util.time() * 0.5 % (math.pi * 2))) or 0
+    local loop_length = params:get(get_track_param("loop_length_in_beats", recording_track))
+    local reel_speed = should_spin and (2.0 / loop_length) or 0 -- Faster for shorter loops
+    local rotation_angle = should_spin and (math.pi * 2 * progress + (util.time() * reel_speed % (math.pi * 2))) or 0
 
     -- Helper to calculate tape positions at the outer edge of the spools
     local function get_outer_edge_coords(spool_x, spool_y, angle_offset)
@@ -388,16 +390,7 @@ function screens.draw_tape_recorder(record_pointer, recording_track)
         tape_head_height)
     screen.stroke()
 
-    -- Track indicator above tape head (centered between reels)
-    if recording_track ~= nil then
-        local track_num = recording_track + 1
-        local indicator_y = spool_center_y - 3
-        screen.level(math.min(15, tape_brightness * 2))
-        screen.font_face(1)
-        screen.font_size(8)
-        screen.move(screen_w / 2, indicator_y)
-        screen.text_center("T" .. track_num)
-    end
+
 
     -- Capstan
     screen.level(tape_brightness)
@@ -473,15 +466,30 @@ function screens.draw_tape_recorder(record_pointer, recording_track)
 
     -- Draw right spool with opposite rotation
     draw_spool(spool_center_right_x, spool_center_y, -rotation_angle)
+
+    -- Track indicator above tape head (centered between reels)
+    if recording_track ~= nil then
+        local track_num = recording_track + 1
+        local indicator_y = spool_center_y + 5
+        local indicator_x = (spool_center_left_x + spool_center_right_x) / 2
+        screen.level(math.min(15, tape_brightness * 2))
+        screen.font_face(1)
+        screen.font_size(8)
+        screen.move(indicator_x, indicator_y)
+        screen.text_center("T" .. track_num)
+    end
 end
 
 ---------------------
 
-function draw_step_visual(steps, current_step)
+function draw_step_visual(steps, current_step, track)
     local angle_offset = -math.pi * 2 / 3
 
+    -- Get current track prefix for parameter names
+    local track_prefix = "t" .. (track + 1) .. "_"
+
     for i = 1, steps do
-        local is_active = params:get("active_" .. i) == 1
+        local is_active = params:get(track_prefix .. "active_" .. i) == 1
         local brightness = is_active and ((i == current_step) and 15 or 4) or 1
 
         local angle_start = (i / steps) * math.pi * 2 + angle_offset
@@ -536,7 +544,7 @@ function draw_step_count(steps)
     screen.font_size(8)
     screen.font_face(1)
     screen.move(screen_w - 4, screen_h - 5)
-    screen.text_right(steps)
+    screen.text_right(math.floor(steps))
 end
 
 function draw_pattern_grid()

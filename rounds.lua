@@ -24,7 +24,7 @@ record_pointer = 0
 -- Track configuration
 local current_track = 0 -- 0-indexed (0 = track 1, 1 = track 2, etc.)
 local num_tracks = 4
-local record_track = 0  -- Which track to record to (0-3)
+-- Each track now has its own recording settings - no global record_track needed
 
 
 local selected_voice_screen = 1
@@ -89,7 +89,16 @@ function init_polls()
 
 
   record_pointer_poll = poll.set('recorderPos', function(value)
-    if params:get(get_track_param("record", record_track)) == 1 then
+    -- Check if any track is currently recording
+    local any_recording = false
+    for track = 0, num_tracks - 1 do
+      if params:get(get_track_param("record", track)) == 1 then
+        any_recording = true
+        break
+      end
+    end
+
+    if any_recording then
       record_pointer = value
     else
       record_pointer = 0
@@ -166,10 +175,7 @@ function track_params(track)
     engine.bufferPath(track, file)
   end)
 
-  params:add_number(prefix .. "steps", "Steps", 1, 64, 16)
-  params:set_action(prefix .. "steps", function(value)
-    engine.steps(track, value)
-  end)
+  -- Steps parameter moved to track_params function
 
   params:add_option(prefix .. "step_division", "Step Division", utils.division_factors, 4)
 
@@ -184,6 +190,11 @@ function track_params(track)
 
   params:add_taper(prefix .. "volume", "Volume", 0, 1, 1, 0)
 
+  params:add_taper(prefix .. "steps", "Steps", 4, 64, 16, 0)
+  params:set_action(prefix .. "steps", function(value)
+    engine.steps(track, value)
+  end)
+
   -- Record
   params:add_group("T" .. track_num .. " Record", 4)
 
@@ -196,13 +207,12 @@ function track_params(track)
   params:add_binary(prefix .. 'record', 'Record', 'toggle', 0)
   params:set_action(prefix .. 'record', function(value)
     if value == 1 then
-      -- Note: Only current_track can record for now
-      if track == current_track then
-        record_clock_id = clock.run(start_recording)
-      end
+      -- Start recording for this specific track
+      record_clock_id = clock.run(start_recording, track)
     else
+      -- Stop recording for this specific track
       engine.record(track, 0)
-      if track == current_track then
+      if record_clock_id then
         clock.cancel(record_clock_id)
       end
     end
@@ -320,7 +330,7 @@ end
 
 function arc_params()
   params:add_group("Arc", 1)
-  params:add_taper("arc_sensitivity", "Sensitivity", 1, 100, 50)
+  params:add_taper("arc_sensitivity", "Sensitivity", 1, 100, 3)
 end
 
 -- Helper function to get the track-specific param name
@@ -375,21 +385,24 @@ end
 
 function steps_as_params()
   params:add_separator("Steps")
-  for i = 1, 64 do
-    params:add_group("step_" .. i, 7)
-    params:add_separator("step: " .. i)
+  for track = 0, num_tracks - 1 do
+    local track_prefix = "t" .. (track + 1) .. "_"
+    for i = 1, 64 do
+      params:add_group(track_prefix .. "step_" .. i, 7)
+      params:add_separator(track_prefix .. "step: " .. i)
 
-    params:add_binary("active_" .. i, "active_" .. i, "toggle", 1)
+      params:add_binary(track_prefix .. "active_" .. i, "active_" .. i, "toggle", 1)
 
-    params:add_taper("rate" .. i, "rate" .. i, -4, 4, 1, 0)
+      params:add_taper(track_prefix .. "rate" .. i, "rate" .. i, -4, 4, 1, 0)
 
-    params:add_taper("amp" .. i, "amp" .. i, 0, 1, 1, 0)
+      params:add_taper(track_prefix .. "amp" .. i, "amp" .. i, 0, 1, 1, 0)
 
-    params:add_binary("reverse" .. i, "reverse" .. i, "toggle", 0)
+      params:add_binary(track_prefix .. "reverse" .. i, "reverse" .. i, "toggle", 0)
 
-    params:add_taper("pan" .. i, "pan" .. i, -1, 1, 0.0, 0)
+      params:add_taper(track_prefix .. "pan" .. i, "pan" .. i, -1, 1, 0.0, 0)
 
-    params:add_number("segment" .. i, "segment" .. i, 1, steps, i)
+      params:add_number(track_prefix .. "segment" .. i, "segment" .. i, 1, 64, i)
+    end
   end
 end
 
@@ -426,14 +439,14 @@ function redraw()
 
   -- Mode 1: Tape Recorder (no left indicator)
   if screen_mode == 1 then
-    screens.draw_tape_recorder(record_pointer, record_track)
+    screens.draw_tape_recorder(record_pointer, current_track)
 
     -- Modes 2-5: Tracks 1-4 (show left indicator for sub-screens)
   elseif screen_mode >= 2 and screen_mode <= 5 then
     screens.draw_screen_indicator(number_of_screens, selected_voice_screen)
     if selected_voice_screen == 1 then
       local track_steps = params:get(get_track_param("steps"))
-      screens.draw_step_circle(track_steps, active_steps[current_track + 1])
+      screens.draw_step_circle(track_steps, active_steps[current_track + 1], current_track)
     elseif selected_voice_screen == 2 then
       draw_envelope_screen()
     elseif selected_voice_screen == 3 then
@@ -635,17 +648,45 @@ function update_filter_graph()
   filter_graph:edit(nil, nil, lowpass_freq, resonance)
 end
 
+-- Global track control
+function toggle_all_tracks()
+  -- Check if any tracks are playing
+  local any_playing = false
+  for track = 0, num_tracks - 1 do
+    if params:get(get_track_param("play", track)) == 1 then
+      any_playing = true
+      break
+    end
+  end
+
+  -- If any tracks are playing, stop all; otherwise start all
+  local new_state = any_playing and 0 or 1
+  local action_text = any_playing and "STOP ALL" or "START ALL"
+
+  for track = 0, num_tracks - 1 do
+    params:set(get_track_param("play", track), new_state)
+  end
+
+  set_show_info_banner(action_text, "center")
+end
+
 -- KEY AND ENC HANDLERS
 function key(n, z)
   if n == 1 then
     shift = (z == 1)
   else
-    if screen_mode == 1 then
-      handle_tape_recorder_key(n, z)
-    elseif screen_mode >= 2 and screen_mode <= 5 then
-      handle_voice_screen_key(n, z)
-    elseif screen_mode == 6 then
-      handle_delay_screen_key(n, z)
+    -- Global start/stop for all tracks (Shift+K2)
+    if n == 2 and z == 1 and shift then
+      toggle_all_tracks()
+    else
+      -- Delegate to screen-specific handlers
+      if screen_mode == 1 then
+        handle_tape_recorder_key(n, z)
+      elseif screen_mode >= 2 and screen_mode <= 5 then
+        handle_voice_screen_key(n, z)
+      elseif screen_mode == 6 then
+        handle_delay_screen_key(n, z)
+      end
     end
   end
 end
@@ -685,24 +726,26 @@ end
 
 function handle_tape_recorder_key(n, z)
   if n == 2 and z == 1 then
-    -- Toggle Record Mode On/Off
-    params:set(get_track_param("sample_or_record", record_track),
-      1 - params:get(get_track_param("sample_or_record", record_track)))
+    -- Toggle Record Mode On/Off for current track
+    params:set(get_track_param("sample_or_record"),
+      1 - params:get(get_track_param("sample_or_record")))
     set_show_info_banner(
-      params:get(get_track_param("sample_or_record", record_track)) == 1 and "REC MODE" or "SAMPLE MODE", "center")
+      params:get(get_track_param("sample_or_record")) == 1 and "REC MODE" or "SAMPLE MODE", "center")
   elseif n == 3 and z == 1 then
     if shift then
-      -- Shift + Button 3: Toggle Arm Record
-      if params:get(get_track_param("sample_or_record", record_track)) == 1 then
-        params:set(get_track_param("arm_record", record_track),
-          1 - params:get(get_track_param("arm_record", record_track)))
-        set_show_info_banner(params:get(get_track_param("arm_record", record_track)) == 1 and "ARM ON" or "ARM OFF",
+      -- Shift + Button 3: Toggle Arm Record for current track
+      if params:get(get_track_param("sample_or_record")) == 1 then
+        params:set(get_track_param("arm_record"),
+          1 - params:get(get_track_param("arm_record")))
+        set_show_info_banner(params:get(get_track_param("arm_record")) == 1 and "ARM ON" or "ARM OFF",
           "center")
+      else
+        set_show_info_banner("SWITCH TO REC MODE FIRST", "center")
       end
     else
-      -- Toggle Record
-      if params:get(get_track_param("sample_or_record", record_track)) == 1 then
-        params:set(get_track_param("record", record_track), 1 - params:get(get_track_param("record", record_track)))
+      -- Toggle Record for current track
+      if params:get(get_track_param("sample_or_record")) == 1 then
+        params:set(get_track_param("record"), 1 - params:get(get_track_param("record")))
       else
         fileselect_active = true
         fileselect.enter(_path.audio, file_select_callback, "audio")
@@ -781,13 +824,16 @@ function handle_step_circle_enc(n, delta)
     if shift then
       -- Clamp direction between 1 and 3, no wrapping
       local current = params:get(get_track_param("direction"))
-      params:set(get_track_param("direction"), utils.clamp(current + delta, 1, 3))
+      local new_direction = utils.clamp(current + delta, 1, 3)
+      print("Changing direction from", current, "to", new_direction)
+      params:set(get_track_param("direction"), new_direction)
     else
       utils.handle_param_change(get_track_param("pattern"), delta, 1, #utils.patterns, 1, "lin")
     end
   elseif n == 3 then
     if shift then
-      local new_steps = utils.clamp(steps + delta, 4, 64)
+      local current_steps = params:get(get_track_param("steps"))
+      local new_steps = utils.clamp(current_steps + delta, 4, 64)
       params:set(get_track_param("steps"), new_steps)
       steps = new_steps
       engine.steps(current_track, steps)
@@ -939,12 +985,11 @@ end
 
 function handle_record_enc(n, delta)
   if n == 2 then
-    print("loop_length_in_beats", params:get(get_track_param("loop_length_in_beats", record_track)))
-    -- Adjust loop length in beats using encoder 2
-    params:delta(get_track_param("loop_length_in_beats", record_track), delta)
+    -- Switch between tracks (this changes which track's recording settings we see)
+    current_track = util.clamp(current_track + delta, 0, num_tracks - 1)
   elseif n == 3 then
-    -- Select which track to record to
-    record_track = util.clamp(record_track + delta, 0, num_tracks - 1)
+    -- Adjust loop length for current track
+    params:delta(get_track_param("loop_length_in_beats"), delta)
   end
 end
 
@@ -1001,8 +1046,18 @@ end
 function arc_redraw()
   a:all(0)
 
-  -- Tracks 1-4 (modes 2-5)
-  if screen_mode >= 2 and screen_mode <= 5 then
+  -- Tape Recorder (mode 1)
+  if screen_mode == 1 then
+    -- Arc 1: Record pointer position
+    arc_utils.display_progress_bar(a, 1, record_pointer, 0, 1)
+    -- Arc 2: Loop length in beats for current track
+    arc_utils.display_progress_bar(a, 2, params:get(get_track_param("loop_length_in_beats")), 1, 64)
+    -- Arc 3: Current track (0-3)
+    arc_utils.display_progress_bar(a, 3, (current_track + 1) / 4, 0, 1)
+    -- Arc 4: Sample or record mode for current track
+    arc_utils.display_selector(a, 4, params:get(get_track_param("sample_or_record")) + 1, 2)
+    -- Tracks 1-4 (modes 2-5)
+  elseif screen_mode >= 2 and screen_mode <= 5 then
     if selected_voice_screen == 1 then
       local current_track_step = active_steps[current_track + 1]
       arc_utils.display_step_pattern(a, 1, utils.patterns[params:get(get_track_param("pattern"))], current_track_step)
@@ -1069,19 +1124,30 @@ function clock.tempo_change_handler()
   update_record_time()
 end
 
-function start_recording()
-  params:set(get_track_param("arm_record", record_track), 0)
-  local step_division = params:get(get_track_param("step_division", record_track))
+function start_recording(track)
+  print("Starting recording for track:", track + 1)
+  params:set(get_track_param("arm_record", track), 0)
+  local step_division = params:get(get_track_param("step_division", track))
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
-  engine.record(record_track, 1)
+  engine.record(track, 1)
+
+  -- Auto-start playback for the recording track
+  params:set(get_track_param("play", track), 1)
+  print("Auto-started playback for track:", track + 1)
 end
 
 function start_sequence()
-  -- Check armed recording for current track
-  if (params:get(get_track_param('arm_record')) == 1) and (params:get(get_track_param('sample_or_record')) == 1) then
-    params:set(get_track_param('record'), 1)
-    params:set(get_track_param('arm_record'), 0)
+  -- Check armed recording for all tracks
+  for track = 0, num_tracks - 1 do
+    local arm_record = params:get(get_track_param('arm_record', track))
+    local sample_or_record = params:get(get_track_param('sample_or_record', track))
+
+    if arm_record == 1 and sample_or_record == 1 then
+      print("Starting armed recording for track:", track + 1)
+      params:set(get_track_param('record', track), 1)
+      params:set(get_track_param('arm_record', track), 0)
+    end
   end
 
   -- Start independent clock for each track
@@ -1092,14 +1158,16 @@ function start_sequence()
       local track_prefix = "t" .. (track + 1) .. "_"
 
       while true do
-        -- Check if this track is playing
-        if params:get(track_prefix .. "play") == 1 then
-          local direction = params:get(track_prefix .. "direction")
-          local track_num_steps = params:get(track_prefix .. "steps")
-          local current_pattern = utils.patterns[params:get(track_prefix .. "pattern")]
-          local pattern_length = #current_pattern
-          local track_division = utils.division_factors[params:get(track_prefix .. "step_division")]
+        -- Get parameters once per cycle to avoid issues with parameter changes
+        local is_playing = params:get(track_prefix .. "play") == 1
+        local direction = params:get(track_prefix .. "direction")
+        local track_num_steps = math.floor(params:get(track_prefix .. "steps"))
+        local current_pattern = utils.patterns[params:get(track_prefix .. "pattern")]
+        local pattern_length = #current_pattern
+        local track_division = utils.division_factors[params:get(track_prefix .. "step_division")]
 
+        -- Check if this track is playing
+        if is_playing then
           local index = 0
 
           if direction == 1 then
@@ -1109,6 +1177,10 @@ function start_sequence()
           elseif direction == 3 then
             index = math.random(1, track_num_steps)
           end
+
+          -- Ensure index is always an integer and within bounds
+          index = math.floor(index)
+          index = math.max(1, math.min(index, track_num_steps))
 
           -- Update active step for this track
           active_steps[track + 1] = index
@@ -1121,12 +1193,12 @@ function start_sequence()
           end
 
           if current_pattern[pattern_index] == 1 then
-            local active = params:get("active_" .. index) == 1
+            local active = params:get(track_prefix .. "active_" .. index) == 1
             if active then
-              local start_segment = params:get("segment" .. index)
-              local reverse = params:get("reverse" .. index)
-              local step_amp = params:get("amp" .. index)
-              local step_pan = params:get("pan" .. index)
+              local start_segment = params:get(track_prefix .. "segment" .. index)
+              local reverse = params:get(track_prefix .. "reverse" .. index)
+              local step_amp = params:get(track_prefix .. "amp" .. index)
+              local step_pan = params:get(track_prefix .. "pan" .. index)
 
               -- Get track-level pan and volume
               local track_pan = params:get(track_prefix .. "pan")

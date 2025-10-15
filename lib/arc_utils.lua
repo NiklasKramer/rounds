@@ -199,7 +199,6 @@ end
 
 -- Display step pattern on the arc
 local function display_step_pattern(arc_device, encoder, pattern, active_step)
-    print(active_step)
     local total_leds = 64
     local leds_per_step = 1
 
@@ -249,7 +248,6 @@ local function display_step_division(arc_device, encoder, step_division_index)
 end
 
 local function display_steps(arc_device, encoder, steps, active_step)
-    print(active_step)
     local total_leds = 64
     local num_steps = math.max(1, steps)
 
