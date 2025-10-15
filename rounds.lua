@@ -1001,18 +1001,31 @@ a.delta = function(n, delta)
   if math.abs(arc_buffer[n]) >= 1 then
     local step = math.floor(arc_buffer[n])
     arc_buffer[n] = arc_buffer[n] - step
-    if n == 1 then
-      enc(2, step)
-    elseif n == 2 then
-      enc(3, step)
-    elseif n == 3 then
-      shift = true
-      enc(2, step)
-      shift = false
-    elseif n == 4 then
-      shift = true
-      enc(3, step)
-      shift = false
+
+    -- Tape Recorder (mode 1): Arc 1 = track, Arc 2 = beats, Arc 3/4 = visual only
+    if screen_mode == 1 then
+      if n == 1 then
+        enc(2, step) -- Track selection
+      elseif n == 2 then
+        enc(3, step) -- Loop length in beats
+      end
+      -- Arc 3 and 4 are visual only (spool animation), no input
+
+      -- Track modes (2-5) and Delay (6): Use standard mapping
+    else
+      if n == 1 then
+        enc(2, step)
+      elseif n == 2 then
+        enc(3, step)
+      elseif n == 3 then
+        shift = true
+        enc(2, step)
+        shift = false
+      elseif n == 4 then
+        shift = true
+        enc(3, step)
+        shift = false
+      end
     end
   end
 end
@@ -1048,14 +1061,27 @@ function arc_redraw()
 
   -- Tape Recorder (mode 1)
   if screen_mode == 1 then
-    -- Arc 1: Record pointer position
-    arc_utils.display_progress_bar(a, 1, record_pointer, 0, 1)
-    -- Arc 2: Loop length in beats for current track
+    -- Arc 1: Current track selector (4 segments)
+    arc_utils.display_selector(a, 1, current_track + 1, 4)
+    -- Arc 2: Loop length in beats (1-64)
     arc_utils.display_progress_bar(a, 2, params:get(get_track_param("loop_length_in_beats")), 1, 64)
-    -- Arc 3: Current track (0-3)
-    arc_utils.display_progress_bar(a, 3, (current_track + 1) / 4, 0, 1)
-    -- Arc 4: Sample or record mode for current track
-    arc_utils.display_selector(a, 4, params:get(get_track_param("sample_or_record")) + 1, 2)
+
+    -- Arc 3 & 4: Tape spool animation with 3 segments
+    local is_recording = params:get(get_track_param("record")) == 1
+    local loop_length = params:get(get_track_param("loop_length_in_beats"))
+
+    -- Calculate rotation (only moves when recording)
+    local time_based_rotation = 0
+    if is_recording then
+      -- Speed inversely proportional to loop length (longer loops = slower rotation)
+      local rotation_speed = 1 / math.max(1, loop_length / 8) -- Normalize to reasonable speed
+      time_based_rotation = (util.time() * rotation_speed) % 1
+    end
+
+    -- Arc 3: Left spool with 3 segments
+    arc_utils.display_tape_spool(a, 3, time_based_rotation, is_recording)
+    -- Arc 4: Right spool with 3 segments (offset for visual variety)
+    arc_utils.display_tape_spool(a, 4, time_based_rotation + 0.33, is_recording)
     -- Tracks 1-4 (modes 2-5)
   elseif screen_mode >= 2 and screen_mode <= 5 then
     if selected_voice_screen == 1 then

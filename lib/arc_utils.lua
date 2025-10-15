@@ -275,6 +275,66 @@ local function display_steps(arc_device, encoder, steps, active_step)
 end
 
 
+-- Display spool-like pattern (mimics tape reel winding)
+local function display_spool_pattern(arc_device, encoder, value, min, max, is_source)
+    local normalized = normalize_param_value(value, min, max)
+
+    -- Create a spool effect: source spool empties, destination spool fills
+    local spool_fullness = is_source and (1 - normalized) or normalized
+    local num_leds = math.floor(spool_fullness * 64)
+
+    -- Draw the "tape" on the spool with varying brightness
+    for i = 1, num_leds do
+        local brightness = 4
+        -- Add some texture to make it look like wound tape
+        if i % 8 == 0 then
+            brightness = 8
+        elseif i % 4 == 0 then
+            brightness = 6
+        end
+        arc_device:led(encoder, i, brightness)
+    end
+
+    -- Add a moving "spin" indicator only if there's significant tape
+    if num_leds > 5 then
+        local spin_position = math.floor((normalized * 64 * 4) % 64) + 1
+        local prev_led = (spin_position - 2) % 64 + 1
+        local curr_led = (spin_position - 1) % 64 + 1
+        local next_led = spin_position
+
+        arc_device:led(encoder, prev_led, 6)
+        arc_device:led(encoder, curr_led, 10)
+        arc_device:led(encoder, next_led, 15)
+    end
+end
+
+-- Display tape spool with 3 evenly-spaced segments (mimics physical reel structure)
+local function display_tape_spool(arc_device, encoder, rotation_value, is_rotating)
+    local rotation = rotation_value % 1
+    local angle_offset = math.floor(rotation * 64)
+
+    -- 3 segments evenly spaced (120 degrees apart = ~21 LEDs)
+    local segment_width = 3    -- LEDs per segment
+    local segment_spacing = 21 -- ~120 degrees
+
+    for segment = 0, 2 do
+        local center = (angle_offset + segment * segment_spacing) % 64
+
+        -- Draw each segment with 3 LEDs
+        for i = -1, 1 do
+            local led = (center + i) % 64 + 1
+            local brightness = 8
+            if i == 0 then
+                brightness = is_rotating and 12 or 5 -- Brighter when rotating, dimmer when stopped
+            else
+                brightness = is_rotating and 6 or 2  -- Dimmer edges when stopped
+            end
+            arc_device:led(encoder, led, brightness)
+        end
+    end
+end
+
+
 return {
     display_percent_markers = display_percent_markers,
     display_spread_pattern = display_spread_pattern,
@@ -289,5 +349,7 @@ return {
     display_step_pattern = display_step_pattern,
     display_step_division = display_step_division,
     display_selector = display_selector,
-    display_steps = display_steps
+    display_steps = display_steps,
+    display_spool_pattern = display_spool_pattern,
+    display_tape_spool = display_tape_spool
 }
