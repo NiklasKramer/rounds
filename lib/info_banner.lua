@@ -146,6 +146,3 @@ function InfoBanner.cleanup()
 end
 
 return InfoBanner
-
-
-

@@ -18,48 +18,55 @@ screens.circle_x = circle_x
 screens.circle_y = circle_y
 
 
-function screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
+function screens.draw_screen_indicator(number_of_screens, selected_voice_screen)
     local indicator_x = 1
     local indicator_height = 3
     local indicator_spacing = 2
     local start_y = (screen_h - (indicator_height + indicator_spacing) * number_of_screens) / 2
 
-    if screen_mode == 2 then
-        -- Voice screens
-        for i = 1, number_of_screens do
-            local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
-            if i == selected_voice_screen and screen_mode == 2 then
-                screen.level(15)
-            else
-                screen.level(3)
-            end
-            screen.move(indicator_x, y_position)
-            screen.line_rel(0, indicator_height)
-            screen.stroke()
+    -- Draw sub-screen indicators for track modes
+    for i = 1, number_of_screens do
+        local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
+        if i == selected_voice_screen then
+            screen.level(15)
+        else
+            screen.level(3)
         end
-    elseif screen_mode == 3 then
-        -- Delay screen indicator
-        screen.level(15)
-        screen.move(screen_w - 8, screen_h / 2 - indicator_height / 2)
+        screen.move(indicator_x, y_position)
         screen.line_rel(0, indicator_height)
         screen.stroke()
-    elseif screen_mode == 1 then
-        -- Record screen has no left indicator
     end
 end
 
-function screens.draw_mode_indicator(screen_mode)
+function screens.draw_mode_indicator(num_modes, current_mode)
     local indicator_width = 1
     local indicator_height = 3
     local indicator_spacing = 2
+    local group_spacing = 4 -- Extra spacing between groups
 
-    local start_y = (screen_h / 2) - ((indicator_height + indicator_spacing) * 1.5)
+    -- Calculate total height with group spacing
+    -- Group 1: Tape (1 indicator)
+    -- Group 2: Tracks 1-4 (4 indicators)
+    -- Group 3: Delay (1 indicator)
+    local total_height = (indicator_height + indicator_spacing) * 6 + group_spacing * 2
+    local start_y = (screen_h / 2) - (total_height / 2)
 
-    for i = 1, 3 do                                       -- Loop through all three modes
+    for i = 1, num_modes do
         local y_position = start_y + (i - 1) * (indicator_height + indicator_spacing)
+
+        -- Add extra spacing after Tape (mode 1)
+        if i > 1 then
+            y_position = y_position + group_spacing
+        end
+
+        -- Add extra spacing after Track 4 (mode 5)
+        if i > 5 then
+            y_position = y_position + group_spacing
+        end
+
         local x_position = screen_w - indicator_width - 2 -- Align to the right side
 
-        if i == screen_mode then
+        if i == current_mode then
             screen.level(15)
         else
             screen.level(3)
@@ -125,10 +132,43 @@ function screens.draw_random_pan_amp_screen()
     local particle_radius = 1.5
     local particle_dispersion = screen_h * 0.6
     local pan_center_x = screen_w / 4 + 4
-    local center_y = screen_h / 2
+    local center_y = screen_h / 2 - 3
 
-    local random_pan_value = params:get("random_pan")
+    -- Get pan and volume values
+    local pan_param = get_track_param and get_track_param("pan") or "t1_pan"
+    local volume_param = get_track_param and get_track_param("volume") or "t1_volume"
+    local pan_value = params:get(pan_param)
+    local volume_value = params:get(volume_param)
+
+    local random_pan_param = get_track_param and get_track_param("random_pan") or "t1_random_pan"
+    local random_pan_value = params:get(random_pan_param)
     local pan_spread = (screen_w / 6) * random_pan_value
+
+    -- Pan indicator (position indicator with center highlight)
+    local bar_max_width = 36
+    local bar_height = 3
+    local bar_spacing = 4
+    local bar_y = screen_h - 10
+
+    local pan_bar_x = pan_center_x - bar_max_width / 2
+
+    -- Draw background track
+    screen.level(1)
+    screen.rect(pan_bar_x, bar_y, bar_max_width, bar_height)
+    screen.stroke()
+
+    -- Highlight center position
+    local center_x = pan_bar_x + bar_max_width / 2
+    screen.level(4)
+    screen.move(center_x, bar_y)
+    screen.line(center_x, bar_y + bar_height)
+    screen.stroke()
+
+    -- Draw pan position indicator
+    local pan_position = pan_bar_x + bar_max_width / 2 + (pan_value * bar_max_width / 2)
+    screen.level(15)
+    screen.rect(pan_position - 1, bar_y - 1, 3, bar_height + 2)
+    screen.fill()
 
     if random_pan_value > 0 then
         for i = 1, num_particles do
@@ -149,13 +189,29 @@ function screens.draw_random_pan_amp_screen()
     local ripple_radius_max = screen_h / 4
     local ripple_radius_min = 3
     local amp_center_x = screen_w * 3 / 4
-    local random_amp_value = params:get("random_amp")
+    local random_amp_param = get_track_param and get_track_param("random_amp") or "t1_random_amp"
+    local random_amp_value = params:get(random_amp_param)
     local amp_max_radius = ripple_radius_min + (ripple_radius_max * random_amp_value)
+
+    -- Volume indicator (matching filter page style)
+    local amp_bar_width = bar_max_width * volume_value
+    local amp_bar_x = amp_center_x - bar_max_width / 2
+
+    screen.level(15)
+    screen.rect(amp_bar_x, bar_y, amp_bar_width, bar_height)
+    screen.fill()
+
+    screen.level(1)
+    screen.rect(amp_bar_x, bar_y, bar_max_width, bar_height)
+    screen.stroke()
 
     for i = 1, 4 do
         local ripple_radius = ripple_radius_min + (amp_max_radius * (i / 4))
-        screen.level(15 - (i * 3))
-        screen.circle(amp_center_x, center_y, ripple_radius)
+        local brightness = 15 - (i * 3)
+        -- Use base radius (ripples controlled by random_amp only)
+        local scaled_radius = ripple_radius
+        screen.level(brightness)
+        screen.circle(amp_center_x, center_y, scaled_radius)
         screen.stroke()
     end
 end
@@ -168,9 +224,14 @@ function screens.draw_random_fifth_octave_screen()
     local octave_arc_radius_min = 15
     local octave_arc_radius_max = 35
 
-    local random_fifth_value = params:get("random_fifth")
-    local random_octave_value = params:get("random_octave")
-    local semitones = params:get("semitones")
+    -- Access the helper function from the parent scope
+    local random_fifth_param = get_track_param and get_track_param("random_fifth") or "t1_random_fifth"
+    local random_octave_param = get_track_param and get_track_param("random_octave") or "t1_random_octave"
+    local semitones_param = get_track_param and get_track_param("semitones") or "t1_semitones"
+
+    local random_fifth_value = params:get(random_fifth_param)
+    local random_octave_value = params:get(random_octave_param)
+    local semitones = params:get(semitones_param)
     local total_arcs = 6
 
     local semitone_range = 48
@@ -207,7 +268,7 @@ function screens.draw_random_fifth_octave_screen()
     screen.fill()
 end
 
-function screens.draw_tape_recorder(record_pointer)
+function screens.draw_tape_recorder(record_pointer, recording_track)
     local outer_spool_radius = 18
     local inner_spool_radius = 4
     local tape_head_width = 12
@@ -222,7 +283,8 @@ function screens.draw_tape_recorder(record_pointer)
 
     -- Determine target y-position of tape head
     local common_y = spool_center_y + 25
-    local tape_head_target_y = params:get("record") == 1 and common_y or (common_y - 10)
+    local record_param = get_track_param and get_track_param("record") or "t1_record"
+    local tape_head_target_y = params:get(record_param) == 1 and common_y or (common_y - 10)
 
     -- Smoothly transition tape head position
     if tape_head_y_position == nil then
@@ -236,7 +298,8 @@ function screens.draw_tape_recorder(record_pointer)
     local tape_head_off = math.abs(tape_head_target_y - tape_head_y_position) < 0.1
 
     -- Set brightness based on record mode
-    local tape_brightness = params:get("sample_or_record") == 1 and 7 or 1 -- Bright when recording, dim otherwise
+    local sample_or_record_param = get_track_param and get_track_param("sample_or_record") or "t1_sample_or_record"
+    local tape_brightness = params:get(sample_or_record_param) == 1 and 7 or 1 -- Bright when recording, dim otherwise
 
     -- Record progress bar at the bottom
     local progress_bar_width = screen_w - 10
@@ -244,7 +307,7 @@ function screens.draw_tape_recorder(record_pointer)
     local progress_bar_y = screen_h - 5
 
     -- Use record_pointer only if recording is active
-    local progress = params:get("record") == 1 and record_pointer or 0
+    local progress = params:get(record_param) == 1 and record_pointer or 0
 
     -- Draw the progress bar
     screen.level(5)
@@ -255,7 +318,8 @@ function screens.draw_tape_recorder(record_pointer)
     screen.fill()
 
     -- Add number of beats
-    local loop_length_in_beats = params:get("loop_length_in_beats")
+    local loop_length_param = get_track_param and get_track_param("loop_length_in_beats") or "t1_loop_length_in_beats"
+    local loop_length_in_beats = params:get(loop_length_param)
     screen.level(tape_brightness)
     screen.font_face(1)
     screen.font_size(8)
@@ -263,8 +327,9 @@ function screens.draw_tape_recorder(record_pointer)
     screen.text("" .. loop_length_in_beats .. "")
 
     -- Add recording light
-    local is_recording = params:get("record") == 1
-    local is_armed = params:get("arm_record") == 1
+    local is_recording = params:get(record_param) == 1
+    local arm_record_param = get_track_param and get_track_param("arm_record") or "t1_arm_record"
+    local is_armed = params:get(arm_record_param) == 1
 
     if is_armed or is_recording then
         local light_brightness = is_recording and 15 or 2 -- Bright for recording, dim for armed
@@ -278,7 +343,7 @@ function screens.draw_tape_recorder(record_pointer)
     end
 
     -- Rotation angle for the spools
-    local should_spin = params:get("record") == 1 or not tape_head_off
+    local should_spin = params:get(record_param) == 1 or not tape_head_off
     local rotation_angle = should_spin and (math.pi * 2 * progress + (util.time() * 0.5 % (math.pi * 2))) or 0
 
     -- Helper to calculate tape positions at the outer edge of the spools
@@ -292,29 +357,29 @@ function screens.draw_tape_recorder(record_pointer)
     local left_tape_x, left_tape_y = get_outer_edge_coords(spool_center_left_x, spool_center_y, math.pi / 2)    -- Bottom of left spool
     local right_tape_x, right_tape_y = get_outer_edge_coords(spool_center_right_x, spool_center_y, math.pi / 2) -- Bottom of right spool
 
-    -- Draw tape from left spool to pinch roller
-    screen.move(left_tape_x, left_tape_y)
-    screen.line(pinch_roller_x, common_y)
+    -- Draw tape from left spool to pinch roller (with gap)
+    screen.move(left_tape_x + 2, left_tape_y)
+    screen.line(pinch_roller_x - 2, common_y)
     screen.stroke()
 
-    -- Draw tape from pinch roller to tape head
-    screen.move(pinch_roller_x, common_y)
-    screen.line(screen_w / 2 - tape_head_width / 2, tape_head_y_position)
+    -- Draw tape from pinch roller to tape head (with gap)
+    screen.move(pinch_roller_x + 2, common_y)
+    screen.line(screen_w / 2 - tape_head_width / 2 - 2, tape_head_y_position)
     screen.stroke()
 
-    -- Draw tape across the tape head
+    -- Draw tape across the tape head (just the head area)
     screen.move(screen_w / 2 - tape_head_width / 2, tape_head_y_position)
     screen.line(screen_w / 2 + tape_head_width / 2, tape_head_y_position)
     screen.stroke()
 
-    -- Draw tape from tape head to capstan
-    screen.move(screen_w / 2 + tape_head_width / 2, tape_head_y_position)
-    screen.line(capstan_x, common_y)
+    -- Draw tape from tape head to capstan (with gap)
+    screen.move(screen_w / 2 + tape_head_width / 2 + 2, tape_head_y_position)
+    screen.line(capstan_x - 2, common_y)
     screen.stroke()
 
-    -- Draw tape from capstan to right spool
-    screen.move(capstan_x, common_y)
-    screen.line(right_tape_x, right_tape_y)
+    -- Draw tape from capstan to right spool (with gap)
+    screen.move(capstan_x + 2, common_y)
+    screen.line(right_tape_x - 2, right_tape_y)
     screen.stroke()
 
     -- Tape head
@@ -322,6 +387,17 @@ function screens.draw_tape_recorder(record_pointer)
     screen.rect(screen_w / 2 - tape_head_width / 2, tape_head_y_position - tape_head_height / 2, tape_head_width,
         tape_head_height)
     screen.stroke()
+
+    -- Track indicator above tape head (centered between reels)
+    if recording_track ~= nil then
+        local track_num = recording_track + 1
+        local indicator_y = spool_center_y - 3
+        screen.level(math.min(15, tape_brightness * 2))
+        screen.font_face(1)
+        screen.font_size(8)
+        screen.move(screen_w / 2, indicator_y)
+        screen.text_center("T" .. track_num)
+    end
 
     -- Capstan
     screen.level(tape_brightness)
@@ -429,9 +505,11 @@ function draw_step_visual(steps, current_step)
 end
 
 function draw_direction_symbol()
-    local direction = params:get("direction")
+    local direction_param = get_track_param and get_track_param("direction") or "t1_direction"
+    local play_param = get_track_param and get_track_param("play") or "t1_play"
+    local direction = params:get(direction_param)
     local symbol = direction_symbols[direction]
-    local is_playing = params:get("play_stop") == 1
+    local is_playing = params:get(play_param) == 1
     local text_brightness = is_playing and 15 or 1
 
     screen.level(text_brightness)
@@ -442,7 +520,8 @@ function draw_direction_symbol()
 end
 
 function draw_step_division()
-    local step_division = params:get("step_division")
+    local step_division_param = get_track_param and get_track_param("step_division") or "t1_step_division"
+    local step_division = params:get(step_division_param)
     local division_text = "1/" .. math.floor(1 / utils.division_factors[step_division])
 
     screen.level(10)
@@ -461,7 +540,9 @@ function draw_step_count(steps)
 end
 
 function draw_pattern_grid()
-    local current_pattern = utils.patterns[params:get("pattern")]
+    -- Access the helper function from the parent scope
+    local pattern_param = get_track_param and get_track_param("pattern") or "t1_pattern"
+    local current_pattern = utils.patterns[params:get(pattern_param)]
     local pattern_length = #current_pattern
     local row_length = 4
     local pattern_x = 5

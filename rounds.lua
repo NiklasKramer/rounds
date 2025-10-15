@@ -21,11 +21,16 @@ local circle_x, circle_y = screen_w / 2, screen_h / 2
 
 record_pointer = 0
 
+-- Track configuration
+local current_track = 0 -- 0-indexed (0 = track 1, 1 = track 2, etc.)
+local num_tracks = 4
+local record_track = 0  -- Which track to record to (0-3)
+
 
 local selected_voice_screen = 1
 local number_of_screens = 5
-local screen_modes = 3
-local screen_mode = 2
+local screen_modes = 6 -- tape, t1, t2, t3, t4, delay
+local screen_mode = 2  -- Start on Track 1
 -- For arc double-tap detection
 -- For arc long press detection
 local arc_key_hold_time = 0
@@ -41,6 +46,9 @@ local info_banner_text = ""
 -- Step and Pattern Configuration
 local steps = 16
 local active_step = 0
+local active_steps = { 0, 0, 0, 0 }    -- Independent step position for each track
+local pattern_indices = { 1, 1, 1, 1 } -- Independent pattern position for each track
+local step_counters = { 1, 1, 1, 1 }   -- Independent step counters for each track
 
 -- Timing and Clock
 local play_clock_id = 0
@@ -66,6 +74,9 @@ function init()
   g.key = function(x, y, z)
     grid_key(x, y, z)
   end
+
+  -- Auto-start the sequencer (tracks control themselves with play param)
+  play_clock_id = clock.run(start_sequence)
 end
 
 function init_polls()
@@ -78,7 +89,7 @@ function init_polls()
 
 
   record_pointer_poll = poll.set('recorderPos', function(value)
-    if params:get("record") == 1 then
+    if params:get(get_track_param("record", record_track)) == 1 then
       record_pointer = value
     else
       record_pointer = 0
@@ -94,14 +105,217 @@ function init_polls()
 end
 
 function init_params()
-  params:add_separator("Rounds")
-  global_params()
-  recording_params()
-  filter_params()
-  randomization_params()
+  params:add_separator("ROUNDS")
+
+  -- ============================================================
+  -- GLOBAL SECTION
+  -- ============================================================
+  params:add_separator("--- GLOBAL ---")
+  params:add_group("Transport", 1)
+  params:add_binary("play_stop", "Play All Tracks", "toggle", 0)
+  params:set_action("play_stop", function(value)
+    -- Toggle all tracks
+    for track = 0, num_tracks - 1 do
+      params:set(get_track_param("play", track), value)
+    end
+  end)
+
+  -- ============================================================
+  -- MASTER FX SECTION
+  -- ============================================================
+  params:add_separator("--- MASTER FX ---")
   delay_params()
-  arc_params()
+
+  -- ============================================================
+  -- TRACKS SECTION
+  -- ============================================================
+  params:add_separator("--- TRACKS ---")
+  for track = 0, num_tracks - 1 do
+    track_params(track)
+  end
+
+  -- ============================================================
+  -- STEPS SECTION
+  -- ============================================================
+  params:add_separator("--- STEPS ---")
   steps_as_params()
+
+  -- ============================================================
+  -- ARC SECTION
+  -- ============================================================
+  params:add_separator("--- ARC ---")
+  arc_params()
+end
+
+function track_params(track)
+  local track_num = track + 1 -- Display as 1-4 instead of 0-3
+  local prefix = "t" .. track_num .. "_"
+
+  params:add_separator("TRACK " .. track_num)
+
+  -- Transport
+  params:add_group("T" .. track_num .. " Transport", 2)
+  params:add_binary(prefix .. "play", "Play", "toggle", 0) -- Default: stopped
+  params:add_option(prefix .. "direction", "Direction", { "Forward", "Reverse", "Random" }, 1)
+
+  -- Global
+  params:add_group("T" .. track_num .. " Global", 7)
+
+  params:add_file(prefix .. "sample", "Sample")
+  params:set_action(prefix .. "sample", function(file)
+    engine.bufferPath(track, file)
+  end)
+
+  params:add_number(prefix .. "steps", "Steps", 1, 64, 16)
+  params:set_action(prefix .. "steps", function(value)
+    engine.steps(track, value)
+  end)
+
+  params:add_option(prefix .. "step_division", "Step Division", utils.division_factors, 4)
+
+  params:add_number(prefix .. "pattern", "Pattern", 1, #utils.patterns, 1)
+
+  params:add_number(prefix .. "semitones", "Semitones", -24, 24, 0)
+  params:set_action(prefix .. "semitones", function(value)
+    engine.semitones(track, value)
+  end)
+
+  params:add_taper(prefix .. "pan", "Pan", -1, 1, 0, 0)
+
+  params:add_taper(prefix .. "volume", "Volume", 0, 1, 1, 0)
+
+  -- Record
+  params:add_group("T" .. track_num .. " Record", 4)
+
+  params:add_binary(prefix .. 'sample_or_record', 'Record Mode On', 'toggle', 0)
+  params:set_action(prefix .. 'sample_or_record', function(value)
+    params:set(prefix .. "record", 0)
+    engine.sampleOrRecord(track, value)
+  end)
+
+  params:add_binary(prefix .. 'record', 'Record', 'toggle', 0)
+  params:set_action(prefix .. 'record', function(value)
+    if value == 1 then
+      -- Note: Only current_track can record for now
+      if track == current_track then
+        record_clock_id = clock.run(start_recording)
+      end
+    else
+      engine.record(track, 0)
+      if track == current_track then
+        clock.cancel(record_clock_id)
+      end
+    end
+  end)
+
+  params:add_binary(prefix .. 'arm_record', 'Arm Record', 'toggle', 0)
+
+  params:add_control(prefix .. 'loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
+  params:set_action(prefix .. 'loop_length_in_beats', function(value)
+    local beat_sec = clock.get_beat_sec()
+    local loop_length = value * beat_sec
+    engine.loopLength(track, loop_length)
+  end)
+
+  -- Envelope
+  params:add_group("T" .. track_num .. " Envelope", 7)
+
+  params:add_binary(prefix .. "env", "Enable Envelope", "toggle", 1)
+  params:set_action(prefix .. "env", function(value)
+    engine.useEnv(track, value)
+  end)
+
+  params:add_taper(prefix .. "attack", "Attack Time", 0, 1, 0.001, 0)
+  params:set_action(prefix .. "attack", function(value)
+    engine.attack(track, value)
+    if track == current_track then
+      update_env_graph()
+    end
+  end)
+
+  params:add_taper(prefix .. "release", "Release Time", 0, 5, 0.5, 0)
+  params:set_action(prefix .. "release", function(value)
+    engine.release(track, value)
+    if track == current_track then
+      update_env_graph()
+    end
+  end)
+
+  params:add_control(prefix .. "lowpass_freq", "Lowpass Frequency", controlspec.new(10, 20000, 'exp', 1, 20000, "hz"))
+  params:set_action(prefix .. 'lowpass_freq', function(value)
+    engine.lowpassFreq(track, value)
+    if track == current_track then
+      update_filter_graph()
+    end
+  end)
+
+  params:add_taper(prefix .. 'resonance', 'Resonance', 0.01, 1, 0)
+  params:set_action(prefix .. 'resonance', function(value)
+    engine.resonance(track, 1 - value)
+    if track == current_track then
+      update_filter_graph()
+    end
+  end)
+
+  params:add_taper(prefix .. 'highpass_freq', 'Highpass Frequency', 1, 20000, 1)
+  params:set_action(prefix .. 'highpass_freq', function(value)
+    engine.highpassFreq(track, value)
+  end)
+
+  params:add_taper(prefix .. "lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
+  params:set_action(prefix .. "lowpass_env_strength", function(value)
+    engine.lowpassEnvStrength(track, value)
+  end)
+
+  -- Randomization
+  params:add_group("T" .. track_num .. " Randomization", 10)
+
+  params:add_taper(prefix .. "random_octave", "Randomize Octave", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_octave", function(value)
+    engine.randomOctave(track, value)
+  end)
+
+  params:add_taper(prefix .. "random_fifth", "Randomize Fifth", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_fifth", function(value)
+    engine.randomFith(track, value)
+  end)
+
+  params:add_option(prefix .. "random_scale", "Random Scale", utils.scale_names, 8)
+
+  params:add_taper(prefix .. "random_pan", "Randomize Pan", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_pan", function(value)
+    engine.randomPan(track, value)
+  end)
+
+  params:add_taper(prefix .. "random_reverse", "Randomize Reverse", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_reverse", function(value)
+    engine.randomReverse(track, value)
+  end)
+
+  params:add_taper(prefix .. "random_attack", "Randomize Attack", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_attack", function(value)
+    engine.randomAttack(track, value)
+  end)
+
+  params:add_taper(prefix .. "random_release", "Randomize Release", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_release", function(value)
+    engine.randomRelease(track, value)
+  end)
+
+  params:add_taper(prefix .. "random_amp", "Randomize Amplitude", 0, 1, 0, 0)
+  params:set_action(prefix .. "random_amp", function(value)
+    engine.randomAmp(track, value)
+  end)
+
+  params:add_taper(prefix .. 'random_lowpass', 'Randomize Lowpass', 0, 1, 0, 0)
+  params:set_action(prefix .. 'random_lowpass', function(value)
+    engine.randomLowPass(track, value)
+  end)
+
+  params:add_taper(prefix .. 'random_highpass', 'Randomize Highpass', 0, 1, 0, 0)
+  params:set_action(prefix .. 'random_highpass', function(value)
+    engine.randomHiPass(track, value)
+  end)
 end
 
 function arc_params()
@@ -109,124 +323,10 @@ function arc_params()
   params:add_taper("arc_sensitivity", "Sensitivity", 1, 100, 50)
 end
 
-function global_params()
-  params:add_group("Global", 7)
-  params:add_file("sample", "Sample")
-  params:set_action("sample", function(file) engine.bufferPath(file) end)
-
-  params:add_binary("play_stop", "Play/Stop", "toggle", 0)
-  params:set_action("play_stop", function(value)
-    if value == 1 then
-      play_clock_id = clock.run(start_sequence)
-    else
-      clock.cancel(play_clock_id)
-    end
-  end)
-
-  params:add_option("step_division", "Step Division", utils.division_factors, 4)
-
-  params:add_number("steps", "Steps", 1, 64, 16)
-  params:set_action("steps", function(value)
-    engine.steps(value)
-  end)
-
-  params:add_number("pattern", "Pattern", 1, #utils.patterns, 1)
-
-  params:add_number("semitones", "Semitones", -24, 24, 0)
-  params:set_action("semitones", function(value)
-    engine.semitones(value)
-  end)
-
-  params:add_option("direction", "Playback Direction", { "Forward", "Reverse", "Random" }, 1)
-end
-
-function recording_params()
-  params:add_group("Record", 4)
-
-  params:add_binary('sample_or_record', 'Record Mode On', 'toggle', 0)
-  params:set_action('sample_or_record', function(value)
-    params:set("record", 0)
-    engine.sampleOrRecord(value)
-  end)
-
-  params:add_binary('record', 'Record', 'toggle', 0)
-  params:set_action('record', function(value)
-    if value == 1 then
-      record_clock_id = clock.run(start_recording)
-    else
-      clock.cancel(record_clock_id)
-      engine.record(0)
-    end
-  end)
-
-  params:add_binary('arm_record', 'Arm Record', 'toggle', 0)
-
-  params:add_control('loop_length_in_beats', 'Loop in Beats', controlspec.new(1, 64, 'lin', 1, 16, "beats"))
-  params:set_action('loop_length_in_beats', function(value)
-    update_record_time()
-  end)
-end
-
-function filter_params()
-  params:add_group("Envelope/Filter", 7)
-  params:add_binary("env", "Enable Envelope", "toggle", 1)
-  params:set_action("env", function(value) engine.useEnv(value) end)
-
-  params:add_taper("attack", "Attack Time", 0, 1, 0.001, 0)
-  params:set_action("attack", function(value)
-    engine.attack(value)
-    update_env_graph()
-  end)
-
-  params:add_taper("release", "Release Time", 0, 5, 0.5, 0)
-  params:set_action("release", function(value)
-    engine.release(value)
-    update_env_graph()
-  end)
-
-  params:add_control("lowpass_freq", "Lowpass Frequency", controlspec.new(10, 20000, 'exp', 1, 20000, "hz"))
-  params:set_action('lowpass_freq', function(value) engine.lowpassFreq(value) end)
-
-  params:add_taper('resonance', 'Resonance', 0.01, 1, 0)
-  params:set_action('resonance', function(value) engine.resonance(1 - value) end)
-
-  params:add_taper('highpass_freq', 'Highpass Frequency', 1, 20000, 1)
-  params:set_action('highpass_freq', function(value) engine.highpassFreq(value) end)
-
-  params:add_taper("lowpass_env_strength", "Lowpass Env Strength", 0, 1, 0, 0)
-  params:set_action("lowpass_env_strength", function(value) engine.lowpassEnvStrength(value) end)
-end
-
-function randomization_params()
-  params:add_group("Randomization", 10)
-  params:add_taper("random_octave", "Randomize Octave", 0, 1, 0, 0)
-  params:set_action("random_octave", function(value) engine.randomOctave(value) end)
-
-  params:add_taper("random_fifth", "Randomize Fifth", 0, 1, 0, 0)
-  params:set_action("random_fifth", function(value) engine.randomFith(value) end)
-
-  params:add_option("random_scale", "Random Scale", utils.scale_names, 8)
-
-  params:add_taper("random_pan", "Randomize Pan", 0, 1, 0, 0)
-  params:set_action("random_pan", function(value) engine.randomPan(value) end)
-
-  params:add_taper("random_reverse", "Randomize Reverse", 0, 1, 0, 0)
-  params:set_action("random_reverse", function(value) engine.randomReverse(value) end)
-
-  params:add_taper("random_attack", "Randomize Attack", 0, 1, 0, 0)
-  params:set_action("random_attack", function(value) engine.randomAttack(value) end)
-
-  params:add_taper("random_release", "Randomize Release", 0, 1, 0, 0)
-  params:set_action("random_release", function(value) engine.randomRelease(value) end)
-
-  params:add_taper("random_amp", "Randomize Amplitude", 0, 1, 0, 0)
-  params:set_action("random_amp", function(value) engine.randomAmp(value) end)
-
-  params:add_taper('random_lowpass', 'Randomize Lowpass', 0, 1, 0, 0)
-  params:set_action('random_lowpass', function(value) engine.randomLowPass(value) end)
-
-  params:add_taper('random_highpass', 'Randomize Highpass', 0, 1, 0, 0)
-  params:set_action('random_highpass', function(value) engine.randomHiPass(value) end)
+-- Helper function to get the track-specific param name
+function get_track_param(param_name, track)
+  track = track or current_track
+  return "t" .. (track + 1) .. "_" .. param_name
 end
 
 function delay_params()
@@ -280,7 +380,6 @@ function steps_as_params()
     params:add_separator("step: " .. i)
 
     params:add_binary("active_" .. i, "active_" .. i, "toggle", 1)
-    params:set_action("active_" .. i, function(value) engine.active(i, value) end)
 
     params:add_taper("rate" .. i, "rate" .. i, -4, 4, 1, 0)
 
@@ -294,18 +393,47 @@ function steps_as_params()
   end
 end
 
+-- Helper to update displays when switching tracks
+function update_track_displays()
+  -- Update envelope graph
+  update_env_graph()
+
+  -- Update filter graph
+  update_filter_graph()
+
+  -- Update steps variable for display
+  steps = params:get(get_track_param("steps"))
+end
+
 -- SCREENS
 function redraw()
   if fileselect_active then return end
   screen.clear()
 
-  -- Draw the main screen components
-  screens.draw_mode_indicator(screen_mode)
+  -- Update current_track based on screen_mode
+  local prev_track = current_track
+  if screen_mode >= 2 and screen_mode <= 5 then
+    current_track = screen_mode - 2 -- Mode 2 = Track 0, Mode 3 = Track 1, etc.
 
-  if screen_mode == 2 then
-    screens.draw_screen_indicator(number_of_screens, selected_voice_screen, screen_mode)
+    -- If track changed, update all displays
+    if prev_track ~= current_track then
+      update_track_displays()
+    end
+  end
+
+  -- Draw the main screen components
+  screens.draw_mode_indicator(screen_modes, screen_mode)
+
+  -- Mode 1: Tape Recorder (no left indicator)
+  if screen_mode == 1 then
+    screens.draw_tape_recorder(record_pointer, record_track)
+
+    -- Modes 2-5: Tracks 1-4 (show left indicator for sub-screens)
+  elseif screen_mode >= 2 and screen_mode <= 5 then
+    screens.draw_screen_indicator(number_of_screens, selected_voice_screen)
     if selected_voice_screen == 1 then
-      screens.draw_step_circle(steps, active_step)
+      local track_steps = params:get(get_track_param("steps"))
+      screens.draw_step_circle(track_steps, active_steps[current_track + 1])
     elseif selected_voice_screen == 2 then
       draw_envelope_screen()
     elseif selected_voice_screen == 3 then
@@ -315,10 +443,10 @@ function redraw()
     elseif selected_voice_screen == 5 then
       draw_filter_screen()
     end
-  elseif screen_mode == 3 then
+
+    -- Mode 6: Delay (Master FX)
+  elseif screen_mode == 6 then
     screens.draw_delay_screen()
-  elseif screen_mode == 1 then
-    screens.draw_tape_recorder(record_pointer)
   end
 
   -- Draw the info banner if active
@@ -406,7 +534,7 @@ function draw_filter_screen()
   local bar_y = circle_y + 21 -- Position below the filter graph
 
   -- Lowpass Env Strength on the left
-  local lowpass_env_strength_value = params:get("lowpass_env_strength")
+  local lowpass_env_strength_value = params:get(get_track_param("lowpass_env_strength"))
   local env_strength_bar_width = bar_max_width * lowpass_env_strength_value
   local env_strength_bar_x = (screens.screen_w / 2) - bar_max_width - bar_spacing
 
@@ -419,7 +547,7 @@ function draw_filter_screen()
   screen.stroke()
 
   -- Randomize Lowpass on the right
-  local random_lowpass_value = params:get("random_lowpass")
+  local random_lowpass_value = params:get(get_track_param("random_lowpass"))
   local random_lowpass_bar_width = bar_max_width * random_lowpass_value
   local random_lowpass_bar_x = (screens.screen_w / 2) + bar_spacing
 
@@ -436,8 +564,8 @@ function draw_envelope_screen()
   env_graph:redraw()
 
   local bar_max_width = 36
-  local random_attack_value = params:get("random_attack")
-  local random_release_value = params:get("random_release")
+  local random_attack_value = params:get(get_track_param("random_attack"))
+  local random_release_value = params:get(get_track_param("random_release"))
   local attack_bar_width = bar_max_width * random_attack_value
   local release_bar_width = bar_max_width * random_release_value
 
@@ -471,8 +599,8 @@ function init_env_graph()
   local env_x = circle_x - (env_width / 2)
   local env_y = circle_y - (env_height / 2) - 5
 
-  local release = params:get("release")
-  local attack = params:get("attack")
+  local release = params:get(get_track_param("release"))
+  local attack = params:get(get_track_param("attack"))
 
   env_graph = EnvGraph.new_ar(0, 1, 0, 1, attack, release, 1)
   env_graph:set_position_and_size(env_x, env_y, env_width, env_height)
@@ -485,8 +613,8 @@ function init_filter_graph()
   local filter_x = circle_x - (filter_width / 2)
   local filter_y = circle_y - (filter_height / 2) - 5
 
-  local lowpass_freq = params:get("lowpass_freq")
-  local resonance = params:get("resonance")
+  local lowpass_freq = params:get(get_track_param("lowpass_freq"))
+  local resonance = params:get(get_track_param("resonance"))
 
   filter_graph = FilterGraph.new(10, 20000, -60, 32.5, 1, 12, lowpass_freq, resonance)
 
@@ -496,14 +624,14 @@ function init_filter_graph()
 end
 
 function update_env_graph()
-  local attack = params:get("attack")
-  local release = params:get("release")
+  local attack = params:get(get_track_param("attack"))
+  local release = params:get(get_track_param("release"))
   env_graph:edit_ar(attack, release)
 end
 
 function update_filter_graph()
-  local lowpass_freq = params:get("lowpass_freq")
-  local resonance = params:get("resonance")
+  local lowpass_freq = params:get(get_track_param("lowpass_freq"))
+  local resonance = params:get(get_track_param("resonance"))
   filter_graph:edit(nil, nil, lowpass_freq, resonance)
 end
 
@@ -514,9 +642,9 @@ function key(n, z)
   else
     if screen_mode == 1 then
       handle_tape_recorder_key(n, z)
-    elseif screen_mode == 2 then
+    elseif screen_mode >= 2 and screen_mode <= 5 then
       handle_voice_screen_key(n, z)
-    elseif screen_mode == 3 then
+    elseif screen_mode == 6 then
       handle_delay_screen_key(n, z)
     end
   end
@@ -558,19 +686,23 @@ end
 function handle_tape_recorder_key(n, z)
   if n == 2 and z == 1 then
     -- Toggle Record Mode On/Off
-    params:set("sample_or_record", 1 - params:get("sample_or_record"))
-    set_show_info_banner(params:get("sample_or_record") == 1 and "REC MODE" or "SAMPLE MODE", "center")
+    params:set(get_track_param("sample_or_record", record_track),
+      1 - params:get(get_track_param("sample_or_record", record_track)))
+    set_show_info_banner(
+      params:get(get_track_param("sample_or_record", record_track)) == 1 and "REC MODE" or "SAMPLE MODE", "center")
   elseif n == 3 and z == 1 then
     if shift then
       -- Shift + Button 3: Toggle Arm Record
-      if params:get("sample_or_record") == 1 then
-        params:set("arm_record", 1 - params:get("arm_record"))
-        set_show_info_banner(params:get("arm_record") == 1 and "ARM ON" or "ARM OFF", "center")
+      if params:get(get_track_param("sample_or_record", record_track)) == 1 then
+        params:set(get_track_param("arm_record", record_track),
+          1 - params:get(get_track_param("arm_record", record_track)))
+        set_show_info_banner(params:get(get_track_param("arm_record", record_track)) == 1 and "ARM ON" or "ARM OFF",
+          "center")
       end
     else
       -- Toggle Record
-      if params:get("sample_or_record") == 1 then
-        params:set("record", 1 - params:get("record"))
+      if params:get(get_track_param("sample_or_record", record_track)) == 1 then
+        params:set(get_track_param("record", record_track), 1 - params:get(get_track_param("record", record_track)))
       else
         fileselect_active = true
         fileselect.enter(_path.audio, file_select_callback, "audio")
@@ -597,12 +729,12 @@ function handle_voice_screen_key(n, z)
         set_show_info_banner(scale_name)
       end
     else
-      -- Toggle Play/Stop
-      params:set("play_stop", 1 - params:get("play_stop"))
+      -- Toggle Play/Stop for current track
+      params:set(get_track_param("play"), 1 - params:get(get_track_param("play")))
     end
   elseif n == 3 and z == 1 then
     -- Handle file selection or pattern change logic
-    if selected_voice_screen == 1 and params:get("sample_or_record") == 0 then
+    if selected_voice_screen == 1 and params:get(get_track_param("sample_or_record")) == 0 then
       fileselect_active = true
       fileselect.enter(_path.audio, file_select_callback, "audio")
     end
@@ -612,15 +744,20 @@ end
 function enc(n, delta)
   if n == 1 then
     if shift then
-      screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes) -- Updated range
+      screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes)
     else
-      if screen_mode == 2 then
+      -- E1 navigates sub-screens only for track modes (2-5)
+      if screen_mode >= 2 and screen_mode <= 5 then
         selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
       end
     end
   else
     -- Delegate to screen-specific handlers
-    if screen_mode == 2 then
+    if screen_mode == 1 then
+      -- Tape recorder
+      handle_record_enc(n, delta)
+    elseif screen_mode >= 2 and screen_mode <= 5 then
+      -- Tracks 1-4
       if selected_voice_screen == 1 then
         handle_step_circle_enc(n, delta)
       elseif selected_voice_screen == 2 then
@@ -632,10 +769,9 @@ function enc(n, delta)
       elseif selected_voice_screen == 5 then
         handle_filter_enc(n, delta)
       end
-    elseif screen_mode == 3 then
+    elseif screen_mode == 6 then
+      -- Delay (Master FX)
       handle_delay_screen_enc(n, delta)
-    elseif screen_mode == 1 then
-      handle_record_enc(n, delta) -- Handle tape recorder interactions
     end
   end
 end
@@ -644,42 +780,49 @@ function handle_step_circle_enc(n, delta)
   if n == 2 then
     if shift then
       -- Clamp direction between 1 and 3, no wrapping
-      local current = params:get("direction")
-      params:set("direction", utils.clamp(current + delta, 1, 3))
+      local current = params:get(get_track_param("direction"))
+      params:set(get_track_param("direction"), utils.clamp(current + delta, 1, 3))
     else
-      utils.handle_param_change("pattern", delta, 1, #utils.patterns, 1, "lin")
+      utils.handle_param_change(get_track_param("pattern"), delta, 1, #utils.patterns, 1, "lin")
     end
   elseif n == 3 then
     if shift then
       local new_steps = utils.clamp(steps + delta, 4, 64)
-      params:set("steps", new_steps)
+      params:set(get_track_param("steps"), new_steps)
       steps = new_steps
-      engine.steps(steps)
+      engine.steps(current_track, steps)
     else
-      utils.handle_param_change("step_division", delta, 1, #utils.division_factors, 1, "lin")
+      utils.handle_param_change(get_track_param("step_division"), delta, 1, #utils.division_factors, 1, "lin")
     end
   end
 end
 
 function handle_envelope_enc(n, delta)
   if shift then
-    if n == 2 then utils.handle_param_change("random_attack", delta, 0, 1, 0.01, "lin") end
-    if n == 3 then utils.handle_param_change("random_release", delta, 0, 1, 0.01, "lin") end
+    if n == 2 then utils.handle_param_change(get_track_param("random_attack"), delta, 0, 1, 0.01, "lin") end
+    if n == 3 then utils.handle_param_change(get_track_param("random_release"), delta, 0, 1, 0.01, "lin") end
   else
     if n == 2 then
-      utils.handle_param_change("attack", delta, 0.001, 1, 0.001, "lin")
+      utils.handle_param_change(get_track_param("attack"), delta, 0.001, 1, 0.001, "lin")
       update_env_graph()
     end
     if n == 3 then
-      utils.handle_param_change("release", delta, 0.001, 5, 0.01, "lin")
+      utils.handle_param_change(get_track_param("release"), delta, 0.001, 5, 0.01, "lin")
       update_env_graph()
     end
   end
 end
 
 function handle_pan_amp_enc(n, delta)
-  if n == 2 then utils.handle_param_change("random_pan", delta, 0, 1, 0.01, "lin") end
-  if n == 3 then utils.handle_param_change("random_amp", delta, 0, 1, 0.01, "lin") end
+  if shift then
+    -- Direct pan and volume control
+    if n == 2 then utils.handle_param_change(get_track_param("pan"), delta, -1, 1, 0.05, "lin") end
+    if n == 3 then utils.handle_param_change(get_track_param("volume"), delta, 0, 1, 0.01, "lin") end
+  else
+    -- Random pan and amp
+    if n == 2 then utils.handle_param_change(get_track_param("random_pan"), delta, 0, 1, 0.01, "lin") end
+    if n == 3 then utils.handle_param_change(get_track_param("random_amp"), delta, 0, 1, 0.01, "lin") end
+  end
 end
 
 function handle_delay_screen_enc(n, delta)
@@ -741,35 +884,35 @@ function handle_fifth_octave_enc(n, delta)
       -- Handle semitones adjustment with preview and update
       if show_info_banner then
         -- Update semitones value
-        utils.handle_param_change("semitones", delta, -24, 24, 1, "lin")
-        set_show_info_banner("Semitones: " .. params:get("semitones"))
+        utils.handle_param_change(get_track_param("semitones"), delta, -24, 24, 1, "lin")
+        set_show_info_banner("Semitones: " .. params:get(get_track_param("semitones")))
       else
         -- Show current semitones value
-        set_show_info_banner("Semitones: " .. params:get("semitones"))
+        set_show_info_banner("Semitones: " .. params:get(get_track_param("semitones")))
       end
     else
       -- Adjust random fifth strength
-      utils.handle_param_change("random_fifth", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change(get_track_param("random_fifth"), delta, 0, 1, 0.01, "lin")
     end
   elseif n == 3 then
     if shift then
       -- Handle random scale adjustment with preview and update
       if show_info_banner then
         -- Update random scale value
-        local current_scale = params:get("random_scale")
+        local current_scale = params:get(get_track_param("random_scale"))
         local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
         if next_scale ~= current_scale then
-          params:set("random_scale", next_scale)
+          params:set(get_track_param("random_scale"), next_scale)
           set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
         end
       else
         -- Show current random scale value
-        local current_scale = params:get("random_scale")
+        local current_scale = params:get(get_track_param("random_scale"))
         set_show_info_banner("Scale: " .. utils.scale_names[current_scale])
       end
     else
       -- Adjust random octave strength
-      utils.handle_param_change("random_octave", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change(get_track_param("random_octave"), delta, 0, 1, 0.01, "lin")
     end
   end
 end
@@ -777,18 +920,18 @@ end
 function handle_filter_enc(n, delta)
   if shift then
     if n == 2 then
-      utils.handle_param_change("lowpass_env_strength", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change(get_track_param("lowpass_env_strength"), delta, 0, 1, 0.01, "lin")
     elseif n == 3 then
-      utils.handle_param_change("random_lowpass", delta, 0, 1, 0.01, "lin")
+      utils.handle_param_change(get_track_param("random_lowpass"), delta, 0, 1, 0.01, "lin")
     end
   else
     if n == 2 then
       -- Use exponential scaling for lowpass frequency
-      utils.handle_param_change("lowpass_freq", delta, 10, 20000, 0.05, "exp")
+      utils.handle_param_change(get_track_param("lowpass_freq"), delta, 10, 20000, 0.05, "exp")
       update_filter_graph()
     elseif n == 3 then
       -- Use linear scaling for resonance
-      utils.handle_param_change("resonance", delta, 0.01, 1, 0.01, "lin")
+      utils.handle_param_change(get_track_param("resonance"), delta, 0.01, 1, 0.01, "lin")
       update_filter_graph()
     end
   end
@@ -796,11 +939,12 @@ end
 
 function handle_record_enc(n, delta)
   if n == 2 then
-    print("loop_length_in_beats", params:get("loop_length_in_beats"))
+    print("loop_length_in_beats", params:get(get_track_param("loop_length_in_beats", record_track)))
     -- Adjust loop length in beats using encoder 2
-    params:delta("loop_length_in_beats", delta)
+    params:delta(get_track_param("loop_length_in_beats", record_track), delta)
   elseif n == 3 then
-    -- Reserved for additional encoder 3 functionality if needed
+    -- Select which track to record to
+    record_track = util.clamp(record_track + delta, 0, num_tracks - 1)
   end
 end
 
@@ -853,35 +997,41 @@ a.key = function(n, z)
 end
 
 
--- ARC redraw function for visual fee dback
+-- ARC redraw function for visual feedback
 function arc_redraw()
   a:all(0)
-  if screen_mode == 2 then
+
+  -- Tracks 1-4 (modes 2-5)
+  if screen_mode >= 2 and screen_mode <= 5 then
     if selected_voice_screen == 1 then
-      arc_utils.display_step_pattern(a, 1, utils.patterns[params:get("pattern")], active_step)
-      arc_utils.display_step_division(a, 2, params:get("step_division"))
-      arc_utils.display_selector(a, 3, params:get("direction"), 3)
-      arc_utils.display_steps(a, 4, params:get("steps"), active_step)
+      local current_track_step = active_steps[current_track + 1]
+      arc_utils.display_step_pattern(a, 1, utils.patterns[params:get(get_track_param("pattern"))], current_track_step)
+      arc_utils.display_step_division(a, 2, params:get(get_track_param("step_division")))
+      arc_utils.display_selector(a, 3, params:get(get_track_param("direction")), 3)
+      arc_utils.display_steps(a, 4, params:get(get_track_param("steps")), current_track_step)
     elseif selected_voice_screen == 2 then
-      arc_utils.display_spread_pattern(a, 1, params:get("attack"), 0.001, 1)
-      arc_utils.display_spread_pattern(a, 2, params:get("release"), 0.001, 5)
-      arc_utils.display_spread_pattern(a, 3, params:get("random_attack"), 0, 1)
-      arc_utils.display_spread_pattern(a, 4, params:get("random_release"), 0, 1)
+      arc_utils.display_spread_pattern(a, 1, params:get(get_track_param("attack")), 0.001, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("release")), 0.001, 5)
+      arc_utils.display_spread_pattern(a, 3, params:get(get_track_param("random_attack")), 0, 1)
+      arc_utils.display_spread_pattern(a, 4, params:get(get_track_param("random_release")), 0, 1)
     elseif selected_voice_screen == 3 then
-      arc_utils.display_random_pattern(a, 1, params:get("random_pan"), 0, 1)
-      arc_utils.display_spread_pattern(a, 2, params:get("random_amp"), 0, 1)
+      arc_utils.display_random_pattern(a, 1, params:get(get_track_param("random_pan")), 0, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("random_amp")), 0, 1)
+      arc_utils.display_panning_value(a, 3, params:get(get_track_param("pan")), -1, 1)
+      arc_utils.display_progress_bar(a, 4, params:get(get_track_param("volume")), 0, 1)
     elseif selected_voice_screen == 4 then
-      arc_utils.display_spread_pattern(a, 1, params:get("random_fifth"), 0, 1)
-      arc_utils.display_spread_pattern(a, 2, params:get("random_octave"), 0, 1)
-      arc_utils.display_panning_value(a, 3, params:get("semitones"), -24, 24)
-      arc_utils.display_selector(a, 4, params:get("random_scale"), 12)
+      arc_utils.display_spread_pattern(a, 1, params:get(get_track_param("random_fifth")), 0, 1)
+      arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("random_octave")), 0, 1)
+      arc_utils.display_panning_value(a, 3, params:get(get_track_param("semitones")), -24, 24)
+      arc_utils.display_selector(a, 4, params:get(get_track_param("random_scale")), 12)
     elseif selected_voice_screen == 5 then
-      arc_utils.display_exponential_pattern(a, 1, params:get("lowpass_freq"), 10, 20000)
-      arc_utils.display_spread_pattern(a, 2, params:get("resonance"), 0.01, 1)
-      arc_utils.display_progress_bar(a, 3, params:get("lowpass_env_strength"), 0, 1)
-      arc_utils.display_progress_bar(a, 4, params:get("random_lowpass"), 0, 1)
+      arc_utils.display_exponential_pattern(a, 1, params:get(get_track_param("lowpass_freq")), 10, 20000)
+      arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("resonance")), 0.01, 1)
+      arc_utils.display_progress_bar(a, 3, params:get(get_track_param("lowpass_env_strength")), 0, 1)
+      arc_utils.display_progress_bar(a, 4, params:get(get_track_param("random_lowpass")), 0, 1)
     end
-  elseif screen_mode == 3 then
+    -- Delay (mode 6)
+  elseif screen_mode == 6 then
     arc_utils.display_spread_pattern(a, 1, params:get("delay_time"), 0, 8)
     arc_utils.display_spread_pattern(a, 2, params:get("delay_feedback"), 0, 20)
     arc_utils.display_progress_bar(a, 3, params:get("delay_mix"), 0, 1)
@@ -899,8 +1049,7 @@ function file_select_callback(file_path)
     selected_file_path = string.sub(file_path, 9, split_at)
     selected_file_path = util.trim_string_to_width(selected_file_path, 128)
     selected_file = string.sub(file_path, split_at + 1)
-    params:set("sample", file_path)
-    engine.bufferPath(file_path)
+    params:set(get_track_param("sample"), file_path)
   end
 
   redraw()
@@ -921,84 +1070,119 @@ function clock.tempo_change_handler()
 end
 
 function start_recording()
-  params:set("arm_record", 0)
-  local step_division = params:get("step_division")
+  params:set(get_track_param("arm_record", record_track), 0)
+  local step_division = params:get(get_track_param("step_division", record_track))
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
-  engine.record(1)
+  engine.record(record_track, 1)
 end
 
 function start_sequence()
-  local i = 1
-  local pattern_index = 1
-
-  if (params:get('arm_record') == 1) and (params:get('sample_or_record') == 1) then
-    params:set('record', 1)
-    params:set('arm_record', 0)
+  -- Check armed recording for current track
+  if (params:get(get_track_param('arm_record')) == 1) and (params:get(get_track_param('sample_or_record')) == 1) then
+    params:set(get_track_param('record'), 1)
+    params:set(get_track_param('arm_record'), 0)
   end
 
-  while true do
-    local current_pattern = utils.patterns[params:get("pattern")]
-    local pattern_length = #current_pattern
-    local direction = params:get("direction")
-    local index = 0
+  -- Start independent clock for each track
+  for track = 0, num_tracks - 1 do
+    clock.run(function()
+      local i = 1
+      local pattern_index = 1
+      local track_prefix = "t" .. (track + 1) .. "_"
 
-    if direction == 1 then
-      index = i
-    elseif direction == 2 then
-      index = steps - i + 1
-    elseif direction == 3 then
-      index = math.random(1, steps)
-    end
+      while true do
+        -- Check if this track is playing
+        if params:get(track_prefix .. "play") == 1 then
+          local direction = params:get(track_prefix .. "direction")
+          local track_num_steps = params:get(track_prefix .. "steps")
+          local current_pattern = utils.patterns[params:get(track_prefix .. "pattern")]
+          local pattern_length = #current_pattern
+          local track_division = utils.division_factors[params:get(track_prefix .. "step_division")]
 
-    active_pattern_step = pattern_index
+          local index = 0
 
-    if current_pattern[pattern_index] == 1 then
-      local active = params:get("active_" .. index) == 1
-      if active then
-        local start_segment = params:get("segment" .. index)
-        local reverse = params:get("reverse" .. index)
-        local amp = params:get("amp" .. index)
-        local pan = params:get("pan" .. index)
+          if direction == 1 then
+            index = i
+          elseif direction == 2 then
+            index = track_num_steps - i + 1
+          elseif direction == 3 then
+            index = math.random(1, track_num_steps)
+          end
 
-        -- Base semitones
-        local semitones = params:get("semitones")
+          -- Update active step for this track
+          active_steps[track + 1] = index
 
-        -- Apply random scale note
-        local scale_index = params:get("random_scale")
-        local scale_name = utils.scale_names[scale_index]
-        local selected_scale = utils.scales[scale_name]
+          -- Set global active step for current track (for visual feedback)
+          if track == current_track then
+            active_pattern_step = pattern_index
+            active_step = index
+            steps = track_num_steps -- Update global steps for display
+          end
 
-        if selected_scale and math.random() < params:get("random_fifth") then
-          local scale_add = selected_scale[math.random(1, #selected_scale)]
-          semitones = semitones + scale_add
+          if current_pattern[pattern_index] == 1 then
+            local active = params:get("active_" .. index) == 1
+            if active then
+              local start_segment = params:get("segment" .. index)
+              local reverse = params:get("reverse" .. index)
+              local step_amp = params:get("amp" .. index)
+              local step_pan = params:get("pan" .. index)
+
+              -- Get track-level pan and volume
+              local track_pan = params:get(track_prefix .. "pan")
+              local track_volume = params:get(track_prefix .. "volume")
+
+              -- Combine step amp with track volume
+              local amp = step_amp * track_volume
+
+              -- Combine step pan with track pan (average weighted by track pan strength)
+              local pan = step_pan * 0.5 + track_pan * 0.5
+
+              -- Base semitones
+              local semitones = params:get(track_prefix .. "semitones")
+
+              -- Apply random scale note
+              local scale_index = params:get(track_prefix .. "random_scale")
+              local scale_name = utils.scale_names[scale_index]
+              local selected_scale = utils.scales[scale_name]
+
+              if selected_scale and math.random() < params:get(track_prefix .. "random_fifth") then
+                local scale_add = selected_scale[math.random(1, #selected_scale)]
+                semitones = semitones + scale_add
+              end
+
+              -- Apply random octave
+              if math.random() < params:get(track_prefix .. "random_octave") then
+                semitones = semitones + 12
+              end
+
+              -- Calculate playback rate
+              local rate = math.pow(2, semitones / 12)
+
+              engine.play(track, start_segment, amp, rate, pan, reverse)
+            end
+          end
+
+          -- Sync to this track's division
+          clock.sync(track_division * 4)
+
+          -- Advance this track's counters
+          i = i + 1
+          pattern_index = pattern_index + 1
+
+          if i > track_num_steps then i = 1 end
+          if pattern_index > pattern_length then pattern_index = 1 end
+        else
+          -- Track is not playing, sleep briefly and check again
+          clock.sleep(0.1)
         end
-
-        -- Apply random octave
-        if math.random() < params:get("random_octave") then
-          semitones = semitones + 12
-        end
-
-        -- Calculate playback rate
-        local rate = math.pow(2, semitones / 12)
-
-        engine.play(start_segment, amp, rate, pan, reverse)
-
-        local step_division = params:get("step_division")
-        clock.sync(utils.division_factors[step_division] * 4)
-
-        active_step = index
       end
-    else
-      local step_division = params:get("step_division")
-      clock.sync(utils.division_factors[step_division] * 4)
-    end
+    end)
+  end
 
-    i = i + 1
-    pattern_index = pattern_index + 1
-
-    if i > steps then i = 1 end
-    if pattern_index > pattern_length then pattern_index = 1 end
+  -- Keep the main sequence alive
+  while true do
+    clock.sleep(1)
   end
 end
 
@@ -1028,6 +1212,9 @@ end
 
 function update_record_time()
   local beat_sec = clock.get_beat_sec()
-  local loop_length = params:get("loop_length_in_beats") * beat_sec
-  engine.loopLength(loop_length)
+  -- Update loop length for all tracks
+  for track = 0, num_tracks - 1 do
+    local loop_length = params:get(get_track_param("loop_length_in_beats", track)) * beat_sec
+    engine.loopLength(track, loop_length)
+  end
 end
