@@ -7,6 +7,7 @@
 ## Requirements
 
 - **monome Norns**
+- **Optional**: Arc for enhanced control
 
 ## Installation
 
@@ -18,75 +19,108 @@
 
 ---
 
-## Controls
+## Overview
 
+Rounds features **4 independent tracks**, each with its own:
 
-### Encoder Functions
+- Sample playback and recording
+- Step sequencer with patterns
+- Envelope and filter controls
+- Randomization parameters
+- Pan and volume controls
 
-- **Enc 1**: Change Voice Screen
-- **Enc 1 + Shift**: Switch between Record, Voice and FX screens
+All tracks share a **master delay effect** and sync to the global Norns clock.
 
 ---
 
-## Voice Screens
+## Controls
 
-### Screen 1
-
-- **Enc 2**: Select Pattern
-- **Enc 3**: Change Beat Length
-- **Enc 2 + Shift**: Set Playback Direction
-- **Enc 3 + Shift**: Set Steps
+### Global Controls
 
 - **Key 1**: Shift
-- **Key 2**: Play/Stop
-- **Key 3**: Load Sample (on Voice Screen 1)
+- **Key 2**: Play/Stop current track
+- **Key 2 + Shift**: Global Play/Stop (all tracks)
+- **Enc 1**: Navigate sub-screens (within track/delay modes)
+- **Enc 1 + Shift**: Switch between Tape, Tracks 1-4, and Delay
 
-### Screen 2
+---
+
+## Tape Recorder Screen
+
+The tape recorder allows you to record audio input for each track.
+
+- **Enc 2**: Select track (1-4)
+- **Enc 3**: Adjust recording buffer length (in beats, 1-64)
+- **Key 2**: Toggle between record and sample mode
+- **Key 3**: Start/stop recording
+- **Key 3 + Shift**: Arm recording (recording will start when playback begins)
+
+---
+
+## Track Screens (1-4)
+
+Each track has 5 sub-screens accessible via **Enc 1**:
+
+### Screen 1: Sequencer
+
+- **Enc 2**: Select Pattern
+- **Enc 3**: Change Beat Division
+- **Enc 2 + Shift**: Set Playback Direction
+- **Enc 3 + Shift**: Set Steps (4-64)
+
+- **Key 3**: Load Sample
+
+### Screen 2: Envelope
 
 - **Enc 2**: Attack
 - **Enc 3**: Release
 - **Enc 2 + Shift**: Randomize Attack
 - **Enc 3 + Shift**: Randomize Release
 
-### Screen 3
+### Screen 3: Pan & Volume
 
 - **Enc 2**: Random Pan
 - **Enc 3**: Random Volume
+- **Enc 2 + Shift**: Pan
+- **Enc 3 + Shift**: Volume
 
-### Screen 4
+### Screen 4: Pitch
 
-- **Enc 2**: Random Note
+- **Enc 2**: Random Fifth
 - **Enc 3**: Random Octave
 - **Enc 2 + Shift**: Pitch in Semitones
-- **Enc 3 + Shift**: Set Scale for Random Note   
+- **Enc 3 + Shift**: Set Scale for Random Fifth
+- **Key 2 + Shift**: Show current scale name
 
+### Screen 5: Filter
 
-### Screen 5
-
-- **Enc 2**: Filter Frequency
-- **Enc 3**: Filter Resonance
-- **Enc 2 + Shift**: Randomize Filter Frequency
-- **Enc 3 + Shift**: Filter Envelope Strength
+- **Enc 2**: Lowpass Frequency
+- **Enc 3**: Resonance
+- **Enc 2 + Shift**: Randomize Lowpass
+- **Enc 3 + Shift**: Lowpass Envelope Strength
 
 ---
 
-## FX Screen
+## Delay Screen (Master FX)
 
-### Delay Screen
+The delay affects all four tracks as a master effect.
 
-- **Enc 2**: Rate
+- **Enc 2**: Delay Time (synced to clock) or Rate (free-running)
 - **Enc 3**: Feedback
 - **Enc 2 + Shift**: Mix
-- **Enc 3 + Shift**: Rotate
+- **Enc 3 + Shift**: Rotate (stereo width)
 
-- **Button 2**: Toggle between delay sync/unsync.
-- **Button 3**: Toggle between straight/dotted/thirds
+- **Key 2**: Toggle delay sync on/off
+- **Key 3**: Toggle between straight/dotted/triplet divisions
 
+---
 
-## Record Screen
+## Arc Support
 
-- **Enc 2**: Adjust recording buffer length (in beats)
-  
-- **Button 2**: Toggle between record and sample mode
-- **Button 3**: Start/stop recording
-- **Button 3 + Shift**: Arm recording (recording will start when playback begins, which allows to sync recording and playback )
+When an Arc is connected, it provides visual feedback and direct control:
+
+- **Tape Screen**: Track selector, loop length, animated reels
+- **Track Screens**: Pattern, division, direction, steps, and all parameters mapped to encoders
+- **Delay Screen**: Time, feedback, mix, and rotate
+
+---
