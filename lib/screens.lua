@@ -131,7 +131,7 @@ function screens.draw_random_pan_amp_screen()
     local num_particles = 10
     local particle_radius = 1.5
     local particle_dispersion = screen_h * 0.6
-    local pan_center_x = screen_w / 4 + 4
+    local pan_center_x = screen_w / 4
     local center_y = screen_h / 2 - 3
 
     -- Get pan and volume values
@@ -148,26 +148,19 @@ function screens.draw_random_pan_amp_screen()
     local bar_max_width = 36
     local bar_height = 3
     local bar_spacing = 4
-    local bar_y = screen_h - 10
+    local bar_y = screen_h - 6
 
     local pan_bar_x = pan_center_x - bar_max_width / 2
 
-    -- Draw background track
-    screen.level(1)
-    screen.rect(pan_bar_x, bar_y, bar_max_width, bar_height)
-    screen.stroke()
-
-    -- Highlight center position
-    local center_x = pan_bar_x + bar_max_width / 2
-    screen.level(4)
-    screen.move(center_x, bar_y)
-    screen.line(center_x, bar_y + bar_height)
-    screen.stroke()
+    -- Highlight center position (aligned with particle column)
+    screen.level(2)
+    screen.rect(pan_center_x - 1.5, bar_y, 3, bar_height)
+    screen.fill()
 
     -- Draw pan position indicator
     local pan_position = pan_bar_x + bar_max_width / 2 + (pan_value * bar_max_width / 2)
     screen.level(15)
-    screen.rect(pan_position - 1, bar_y - 1, 3, bar_height + 2)
+    screen.rect(pan_position - 1.5, bar_y, 3, bar_height)
     screen.fill()
 
     if random_pan_value > 0 then
@@ -181,7 +174,7 @@ function screens.draw_random_pan_amp_screen()
         end
     else
         screen.level(1)
-        screen.rect(pan_center_x - 1, center_y - particle_dispersion / 2, 3, particle_dispersion)
+        screen.rect(pan_center_x - 1.5, center_y - particle_dispersion / 2, 3, particle_dispersion)
         screen.fill()
     end
 
@@ -193,17 +186,14 @@ function screens.draw_random_pan_amp_screen()
     local random_amp_value = params:get(random_amp_param)
     local amp_max_radius = ripple_radius_min + (ripple_radius_max * random_amp_value)
 
-    -- Volume indicator (matching filter page style)
-    local amp_bar_width = bar_max_width * volume_value
-    local amp_bar_x = amp_center_x - bar_max_width / 2
-
-    screen.level(15)
-    screen.rect(amp_bar_x, bar_y, amp_bar_width, bar_height)
-    screen.fill()
-
-    screen.level(1)
-    screen.rect(amp_bar_x, bar_y, bar_max_width, bar_height)
-    screen.stroke()
+    -- Volume indicator (brightness and size-based)
+    local volume_brightness = math.floor(volume_value * 15)
+    if volume_brightness > 0 then
+        local volume_radius = 0.5 + (volume_value * 1.5)
+        screen.level(volume_brightness)
+        screen.circle(amp_center_x, bar_y + 1, volume_radius)
+        screen.fill()
+    end
 
     for i = 1, 4 do
         local ripple_radius = ripple_radius_min + (amp_max_radius * (i / 4))
