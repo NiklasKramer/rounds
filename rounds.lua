@@ -21,18 +21,14 @@ local circle_x, circle_y = screen_w / 2, screen_h / 2
 
 record_pointer = 0
 
--- Track configuration
-local current_track = 0 -- 0-indexed (0 = track 1, 1 = track 2, etc.)
+local current_track = 0
+local tape_selected_track = 0
 local num_tracks = 4
--- Each track now has its own recording settings - no global record_track needed
-
-
-local selected_voice_screen = 1
+local selected_voice_screen = { 1, 1, 1, 1 }
 local number_of_screens = 5
-local screen_modes = 6 -- tape, t1, t2, t3, t4, delay
-local screen_mode = 2  -- Start on Track 1
--- For arc double-tap detection
--- For arc long press detection
+local screen_modes = 6
+local screen_mode = 2
+local prev_screen_mode = 2
 local arc_key_hold_time = 0
 local long_press_threshold = 0.5
 local shift = false
@@ -423,41 +419,39 @@ function redraw()
   if fileselect_active then return end
   screen.clear()
 
-  -- Update current_track based on screen_mode
-  local prev_track = current_track
-  if screen_mode >= 2 and screen_mode <= 5 then
-    current_track = screen_mode - 2 -- Mode 2 = Track 0, Mode 3 = Track 1, etc.
-
-    -- If track changed, update all displays
-    if prev_track ~= current_track then
-      update_track_displays()
+  if screen_mode ~= prev_screen_mode then
+    if prev_screen_mode == 1 and screen_mode >= 2 and screen_mode <= 5 then
+      tape_selected_track = current_track
+    elseif screen_mode == 1 and prev_screen_mode >= 2 and prev_screen_mode <= 5 then
+      current_track = tape_selected_track
     end
+    prev_screen_mode = screen_mode
+  end
+
+  if screen_mode >= 2 and screen_mode <= 5 then
+    current_track = screen_mode - 2
   end
 
   -- Draw the main screen components
   screens.draw_mode_indicator(screen_modes, screen_mode)
 
-  -- Mode 1: Tape Recorder (no left indicator)
   if screen_mode == 1 then
     screens.draw_tape_recorder(record_pointer, current_track)
-
-    -- Modes 2-5: Tracks 1-4 (show left indicator for sub-screens)
   elseif screen_mode >= 2 and screen_mode <= 5 then
-    screens.draw_screen_indicator(number_of_screens, selected_voice_screen)
-    if selected_voice_screen == 1 then
+    local current_screen = selected_voice_screen[current_track + 1]
+    screens.draw_screen_indicator(number_of_screens, current_screen)
+    if current_screen == 1 then
       local track_steps = params:get(get_track_param("steps"))
       screens.draw_step_circle(track_steps, active_steps[current_track + 1], current_track)
-    elseif selected_voice_screen == 2 then
+    elseif current_screen == 2 then
       draw_envelope_screen()
-    elseif selected_voice_screen == 3 then
+    elseif current_screen == 3 then
       screens.draw_random_pan_amp_screen()
-    elseif selected_voice_screen == 4 then
+    elseif current_screen == 4 then
       screens.draw_random_fifth_octave_screen()
-    elseif selected_voice_screen == 5 then
+    elseif current_screen == 5 then
       draw_filter_screen()
     end
-
-    -- Mode 6: Delay (Master FX)
   elseif screen_mode == 6 then
     screens.draw_delay_screen()
   end
@@ -756,18 +750,13 @@ end
 
 function handle_voice_screen_key(n, z)
   if n == 2 and z == 1 then
-    if selected_voice_screen == 4 then
+    local current_screen = selected_voice_screen[current_track + 1]
+    if current_screen == 4 then
       if shift then
         -- Show info banner with the name of the selected scale
         local scale_name = utils.scale_names[prev_scale]
         set_show_info_banner(scale_name)
       else
-        -- Toggle forward through random scales
-        -- local current_scale = params:get("random_scale")
-        -- local next_scale = (current_scale % #utils.scale_names) + 1
-        -- params:set("random_scale", next_scale)
-
-        -- Show info banner with the name of the selected scale
         local scale_name = utils.scale_names[next_scale]
         set_show_info_banner(scale_name)
       end
@@ -777,7 +766,8 @@ function handle_voice_screen_key(n, z)
     end
   elseif n == 3 and z == 1 then
     -- Handle file selection or pattern change logic
-    if selected_voice_screen == 1 and params:get(get_track_param("sample_or_record")) == 0 then
+    local current_screen = selected_voice_screen[current_track + 1]
+    if current_screen == 1 and params:get(get_track_param("sample_or_record")) == 0 then
       fileselect_active = true
       fileselect.enter(_path.audio, file_select_callback, "audio")
     end
@@ -789,31 +779,28 @@ function enc(n, delta)
     if shift then
       screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes)
     else
-      -- E1 navigates sub-screens only for track modes (2-5)
       if screen_mode >= 2 and screen_mode <= 5 then
-        selected_voice_screen = utils.clamp(selected_voice_screen + delta, 1, number_of_screens)
+        selected_voice_screen[current_track + 1] = utils.clamp(selected_voice_screen[current_track + 1] + delta, 1,
+          number_of_screens)
       end
     end
   else
-    -- Delegate to screen-specific handlers
     if screen_mode == 1 then
-      -- Tape recorder
       handle_record_enc(n, delta)
     elseif screen_mode >= 2 and screen_mode <= 5 then
-      -- Tracks 1-4
-      if selected_voice_screen == 1 then
+      local current_screen = selected_voice_screen[current_track + 1]
+      if current_screen == 1 then
         handle_step_circle_enc(n, delta)
-      elseif selected_voice_screen == 2 then
+      elseif current_screen == 2 then
         handle_envelope_enc(n, delta)
-      elseif selected_voice_screen == 3 then
+      elseif current_screen == 3 then
         handle_pan_amp_enc(n, delta)
-      elseif selected_voice_screen == 4 then
+      elseif current_screen == 4 then
         handle_fifth_octave_enc(n, delta)
-      elseif selected_voice_screen == 5 then
+      elseif current_screen == 5 then
         handle_filter_enc(n, delta)
       end
     elseif screen_mode == 6 then
-      -- Delay (Master FX)
       handle_delay_screen_enc(n, delta)
     end
   end
@@ -1044,9 +1031,9 @@ a.key = function(n, z)
         end
       else
         -- Short press: advance selected_voice_screen
-        selected_voice_screen = selected_voice_screen + 1
-        if selected_voice_screen > number_of_screens then
-          selected_voice_screen = 1
+        selected_voice_screen[current_track + 1] = selected_voice_screen[current_track + 1] + 1
+        if selected_voice_screen[current_track + 1] > number_of_screens then
+          selected_voice_screen[current_track + 1] = 1
         end
       end
       redraw()
@@ -1084,28 +1071,29 @@ function arc_redraw()
     arc_utils.display_tape_spool(a, 4, time_based_rotation + 0.33, is_recording)
     -- Tracks 1-4 (modes 2-5)
   elseif screen_mode >= 2 and screen_mode <= 5 then
-    if selected_voice_screen == 1 then
+    local current_screen = selected_voice_screen[current_track + 1]
+    if current_screen == 1 then
       local current_track_step = active_steps[current_track + 1]
       arc_utils.display_step_pattern(a, 1, utils.patterns[params:get(get_track_param("pattern"))], current_track_step)
       arc_utils.display_step_division(a, 2, params:get(get_track_param("step_division")))
       arc_utils.display_selector(a, 3, params:get(get_track_param("direction")), 3)
       arc_utils.display_steps(a, 4, params:get(get_track_param("steps")), current_track_step)
-    elseif selected_voice_screen == 2 then
+    elseif current_screen == 2 then
       arc_utils.display_spread_pattern(a, 1, params:get(get_track_param("attack")), 0.001, 1)
       arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("release")), 0.001, 5)
       arc_utils.display_spread_pattern(a, 3, params:get(get_track_param("random_attack")), 0, 1)
       arc_utils.display_spread_pattern(a, 4, params:get(get_track_param("random_release")), 0, 1)
-    elseif selected_voice_screen == 3 then
+    elseif current_screen == 3 then
       arc_utils.display_random_pattern(a, 1, params:get(get_track_param("random_pan")), 0, 1)
       arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("random_amp")), 0, 1)
       arc_utils.display_panning_value(a, 3, params:get(get_track_param("pan")), -1, 1)
       arc_utils.display_progress_bar(a, 4, params:get(get_track_param("volume")), 0, 1)
-    elseif selected_voice_screen == 4 then
+    elseif current_screen == 4 then
       arc_utils.display_spread_pattern(a, 1, params:get(get_track_param("random_fifth")), 0, 1)
       arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("random_octave")), 0, 1)
       arc_utils.display_panning_value(a, 3, params:get(get_track_param("semitones")), -24, 24)
       arc_utils.display_selector(a, 4, params:get(get_track_param("random_scale")), 12)
-    elseif selected_voice_screen == 5 then
+    elseif current_screen == 5 then
       arc_utils.display_exponential_pattern(a, 1, params:get(get_track_param("lowpass_freq")), 10, 20000)
       arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("resonance")), 0.01, 1)
       arc_utils.display_progress_bar(a, 3, params:get(get_track_param("lowpass_env_strength")), 0, 1)
@@ -1157,31 +1145,16 @@ function start_recording(track)
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
   engine.record(track, 1)
-
-  -- Auto-start playback for the recording track
-  params:set(get_track_param("play", track), 1)
-  print("Auto-started playback for track:", track + 1)
 end
 
 function start_sequence()
-  -- Check armed recording for all tracks
-  for track = 0, num_tracks - 1 do
-    local arm_record = params:get(get_track_param('arm_record', track))
-    local sample_or_record = params:get(get_track_param('sample_or_record', track))
-
-    if arm_record == 1 and sample_or_record == 1 then
-      print("Starting armed recording for track:", track + 1)
-      params:set(get_track_param('record', track), 1)
-      params:set(get_track_param('arm_record', track), 0)
-    end
-  end
-
   -- Start independent clock for each track
   for track = 0, num_tracks - 1 do
     clock.run(function()
       local i = 1
       local pattern_index = 1
       local track_prefix = "t" .. (track + 1) .. "_"
+      local was_playing = false
 
       while true do
         -- Get parameters once per cycle to avoid issues with parameter changes
@@ -1191,6 +1164,20 @@ function start_sequence()
         local current_pattern = utils.patterns[params:get(track_prefix .. "pattern")]
         local pattern_length = #current_pattern
         local track_division = utils.division_factors[params:get(track_prefix .. "step_division")]
+
+        -- Check if this track just started playing (transition from stopped to playing)
+        if is_playing and not was_playing then
+          -- Check armed recording for this track
+          local arm_record = params:get(get_track_param('arm_record', track))
+          local sample_or_record = params:get(get_track_param('sample_or_record', track))
+
+          if arm_record == 1 and sample_or_record == 1 then
+            print("Starting armed recording for track:", track + 1)
+            params:set(get_track_param('record', track), 1)
+          end
+        end
+
+        was_playing = is_playing
 
         -- Check if this track is playing
         if is_playing then
