@@ -1,10 +1,9 @@
--- ARC rotary input smoothing buffer
-local arc_buffer = { 0, 0, 0, 0 }
 -- rounds is a clocked sample
 -- manipulation environment
 
 engine.name = 'Rounds'
-
+-- ARC rotary input smoothing buffer
+local arc_buffer = { 0, 0, 0, 0 }
 local g = grid.connect()
 local EnvGraph = require "envgraph"
 local FilterGraph = require "filtergraph"
@@ -343,6 +342,9 @@ function delay_params()
   params:set_action("delay_mix", function(value) engine.mix(value) end)
 
   params:add_binary('delay_sync', 'Sync', 'toggle', 1)
+  params:set_action('delay_sync', function(value)
+    update_delay_time()
+  end)
 
   params:add_option("delay_subdivision_type", "Subdivision Type", { "Straight", "Dotted", "Triplet" }, 1)
   params:set_action("delay_subdivision_type", function(value)
@@ -1186,7 +1188,7 @@ function start_sequence()
 
         was_playing = is_playing
 
-        -- Check if this track is playing
+        -- Only advance sequence and trigger sounds when playing
         if is_playing then
           local index = 0
 
@@ -1255,19 +1257,16 @@ function start_sequence()
             end
           end
 
-          -- Sync to this track's division
-          clock.sync(track_division * 4)
-
           -- Advance this track's counters
           i = i + 1
           pattern_index = pattern_index + 1
 
           if i > track_num_steps then i = 1 end
           if pattern_index > pattern_length then pattern_index = 1 end
-        else
-          -- Track is not playing, sleep briefly and check again
-          clock.sleep(0.1)
         end
+
+        -- Always sync to clock to maintain beat alignment (even when stopped)
+        clock.sync(track_division * 4)
       end
     end)
   end
