@@ -213,8 +213,8 @@ Engine_Rounds : CroneEngine {
         }).add;
 
         SynthDef(\continuousRecorder, {
-            |bufnumL, bufnumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1|
-            var signalL, signalR, pos, endFrame, existingLeft, existingRight, mixedLeft, mixedRight;
+            |bufnumL, bufnumR, rate = 1, inputBus = 0, loop = 1, isRecording = 0, out = 0, phase_out = 0, loopLength = 1, reset = 0|
+            var signalL, signalR, pos, endFrame, existingLeft, existingRight, mixedLeft, mixedRight, resetTrig;
 
             // Capture stereo input
             signalL = SoundIn.ar(inputBus);
@@ -223,9 +223,12 @@ Engine_Rounds : CroneEngine {
             // Calculate end frame based on loopLength
             endFrame = loopLength * SampleRate.ir;
 
-            // Create a position Phasor that wraps within the loopLength
+            // Create a trigger when reset changes from 0 to positive
+            resetTrig = Trig.kr(reset, 0.001);
+
+            // Phasor runs continuously, resets when triggered
             pos = Phasor.ar(
-                trig: isRecording,
+                trig: resetTrig,
                 rate: rate * BufRateScale.kr(bufnumL),
                 start: 0,
                 end: endFrame,
@@ -467,6 +470,15 @@ Engine_Rounds : CroneEngine {
                 segmentLengths[trackIndex] = loopLengths[trackIndex] / numSegmentsList[trackIndex];
             }
         });
+
+        this.addCommand(\resetRecorder, "i", { |msg|
+            var trackIndex = msg[1];
+            recorders[trackIndex].set(\reset, 1);
+            // Reset back to 0 after a brief moment to allow retriggering
+            context.server.makeBundle(0.01, {
+                recorders[trackIndex].set(\reset, 0);
+            });
+        });
         
         this.addCommand(\loopLength, "if", { |msg|
             var trackIndex = msg[1];
@@ -525,9 +537,12 @@ Engine_Rounds : CroneEngine {
 
             // Only write if in record mode and buffer has valid frames
             if (sampleOrRecords[trackIndex] == 1 and: { recordBuffers[trackIndex].numFrames > 0 }) {
-                ("Writing track % buffers to: " ++ path).format(trackIndex + 1).postln;
-                recordBuffers[trackIndex].write(pathL, "wav", "int24", 0, -1, leaveOpen: false);
-                recordBuffersR[trackIndex].write(pathR, "wav", "int24", 0, -1, leaveOpen: false);
+                ("Writing track % buffers: " ++ recordBuffers[trackIndex].numFrames ++ " frames (" ++ recordBuffers[trackIndex].duration ++ "s) to: " ++ path).format(trackIndex + 1).postln;
+                // Write entire buffer: numFrames=-1 (all), startFrame=0
+                recordBuffers[trackIndex].write(pathL, headerFormat: "wav", sampleFormat: "int24",
+                    numFrames: -1, startFrame: 0, leaveOpen: false);
+                recordBuffersR[trackIndex].write(pathR, headerFormat: "wav", sampleFormat: "int24",
+                    numFrames: -1, startFrame: 0, leaveOpen: false);
             } {
                 ("Track %: skipping (no recorded data or not in record mode)").format(trackIndex + 1).postln;
             };

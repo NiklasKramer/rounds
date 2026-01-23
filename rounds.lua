@@ -29,9 +29,12 @@ local number_of_screens = 5
 local screen_modes = 6
 local screen_mode = 2
 local prev_screen_mode = 2
+local global_screen = 1  -- 1 = tape recorder, 2 = tempo/swing
+local number_of_global_screens = 2
 local arc_key_hold_time = 0
 local long_press_threshold = 0.5
 local shift = false
+local delay_division_delta_accum = 0  -- Accumulator for delay division encoder
 local fileselect_active = false
 local selected_file_path = 'none'
 
@@ -139,13 +142,18 @@ function init_params()
   -- GLOBAL SECTION
   -- ============================================================
   params:add_separator("--- GLOBAL ---")
-  params:add_group("Transport", 1)
+  params:add_group("Transport", 2)
   params:add_binary("play_stop", "Play All Tracks", "toggle", 0)
   params:set_action("play_stop", function(value)
     -- Toggle all tracks
     for track = 0, num_tracks - 1 do
       params:set(get_track_param("play", track), value)
     end
+  end)
+
+  params:add_taper("swing", "Swing", 0, 100, 0, 0, "%")
+  params:set_action("swing", function(value)
+    -- Swing implementation can be added later
   end)
 
   -- ============================================================
@@ -475,7 +483,14 @@ function redraw()
   screens.draw_mode_indicator(screen_modes, screen_mode)
 
   if screen_mode == 1 then
-    screens.draw_tape_recorder(record_pointer, current_track)
+    -- Draw sub-screen indicator for global screens
+    screens.draw_screen_indicator(number_of_global_screens, global_screen)
+
+    if global_screen == 1 then
+      screens.draw_tape_recorder(record_pointer, current_track)
+    elseif global_screen == 2 then
+      draw_tempo_screen()
+    end
   elseif screen_mode >= 2 and screen_mode <= 5 then
     local current_screen = selected_voice_screen[current_track + 1]
     screens.draw_screen_indicator(number_of_screens, current_screen)
@@ -606,6 +621,31 @@ function draw_filter_screen()
   screen.stroke()
 end
 
+function draw_tempo_screen()
+  local bpm = math.floor(clock.get_tempo() + 0.5)  -- Round to nearest integer
+  local swing = params:get("swing")
+
+  -- Draw BPM
+  screen.level(15)
+  screen.font_face(1)
+  screen.font_size(8)
+  screen.move(10, 20)
+  screen.text("BPM")
+
+  screen.font_size(16)
+  screen.move(10, 38)
+  screen.text(bpm)
+
+  -- Draw Swing
+  screen.font_size(8)
+  screen.move(70, 20)
+  screen.text("SWING")
+
+  screen.font_size(16)
+  screen.move(70, 38)
+  screen.text(swing .. "%")
+end
+
 function draw_envelope_screen()
   env_graph:redraw()
 
@@ -714,7 +754,11 @@ function key(n, z)
     else
       -- Delegate to screen-specific handlers
       if screen_mode == 1 then
-        handle_tape_recorder_key(n, z)
+        if global_screen == 1 then
+          handle_tape_recorder_key(n, z)
+        elseif global_screen == 2 then
+          handle_tempo_key(n, z)
+        end
       elseif screen_mode >= 2 and screen_mode <= 5 then
         handle_voice_screen_key(n, z)
       elseif screen_mode == 6 then
@@ -753,6 +797,18 @@ function handle_delay_screen_key(n, z)
         local subdivision_name = current_subdivision == 1 and "--" or (current_subdivision == 2 and "•" or "3")
         set_show_info_banner(subdivision_name)
       end
+    end
+  end
+end
+
+function handle_tempo_key(n, z)
+  if n == 2 and z == 1 then
+    -- Could be used for tap tempo in the future
+  elseif n == 3 and z == 1 then
+    if shift then
+      -- Reset swing to 0
+      params:set("swing", 0)
+      set_show_info_banner("SWING RESET", "center")
     end
   end
 end
@@ -818,14 +874,21 @@ function enc(n, delta)
     if shift then
       screen_mode = utils.clamp(screen_mode + delta, 1, screen_modes)
     else
-      if screen_mode >= 2 and screen_mode <= 5 then
+      if screen_mode == 1 then
+        -- Switch between global screens (tape recorder / tempo)
+        global_screen = utils.clamp(global_screen + delta, 1, number_of_global_screens)
+      elseif screen_mode >= 2 and screen_mode <= 5 then
         selected_voice_screen[current_track + 1] = utils.clamp(selected_voice_screen[current_track + 1] + delta, 1,
           number_of_screens)
       end
     end
   else
     if screen_mode == 1 then
-      handle_record_enc(n, delta)
+      if global_screen == 1 then
+        handle_record_enc(n, delta)
+      elseif global_screen == 2 then
+        handle_tempo_enc(n, delta)
+      end
     elseif screen_mode >= 2 and screen_mode <= 5 then
       local current_screen = selected_voice_screen[current_track + 1]
       if current_screen == 1 then
@@ -912,7 +975,16 @@ function handle_delay_screen_enc(n, delta)
       if show_info_banner then
         -- Update delay division or time based on sync
         if params:get("delay_sync") == 1 then
-          params:delta("delay_division", delta)
+          -- Accumulate delta for less sensitive division control
+          delay_division_delta_accum = delay_division_delta_accum + delta
+          local threshold = 3  -- Require 3 encoder ticks to change division
+          if math.abs(delay_division_delta_accum) >= threshold then
+            local steps = delay_division_delta_accum > 0 and 1 or -1
+            delay_division_delta_accum = 0
+            local current = params:get("delay_division")
+            local new_val = util.clamp(current + steps, 1, #utils.delay_divisions_as_strings)
+            params:set("delay_division", new_val)
+          end
           set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
         else
           params:delta("delay_time", delta)
@@ -920,6 +992,7 @@ function handle_delay_screen_enc(n, delta)
         end
       else
         -- Show current delay division or time
+        delay_division_delta_accum = 0  -- Reset accumulator when banner is hidden
         if params:get("delay_sync") == 1 then
           set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
         else
@@ -1019,6 +1092,20 @@ function handle_record_enc(n, delta)
   end
 end
 
+function handle_tempo_enc(n, delta)
+  if n == 2 then
+    -- Adjust BPM - directly control norns clock
+    local current_bpm = clock.get_tempo()
+    local new_bpm = util.clamp(current_bpm + delta, 20, 300)
+    params:set("clock_tempo", new_bpm)
+  elseif n == 3 then
+    -- Adjust Swing
+    local current_swing = params:get("swing")
+    local new_swing = util.clamp(current_swing + delta, 0, 100)
+    params:set("swing", new_swing)
+  end
+end
+
 -- ARC encoder mappings
 a.delta = function(n, delta)
   local sens = params:get("arc_sensitivity")
@@ -1028,14 +1115,24 @@ a.delta = function(n, delta)
     local step = math.floor(arc_buffer[n])
     arc_buffer[n] = arc_buffer[n] - step
 
-    -- Tape Recorder (mode 1): Arc 1 = track, Arc 2 = beats, Arc 3/4 = visual only
+    -- Global screens (mode 1): Different controls based on global_screen
     if screen_mode == 1 then
-      if n == 1 then
-        enc(2, step) -- Track selection
-      elseif n == 2 then
-        enc(3, step) -- Loop length in beats
+      if global_screen == 1 then
+        -- Tape Recorder: Arc 1 = track, Arc 2 = beats, Arc 3/4 = visual only
+        if n == 1 then
+          enc(2, step) -- Track selection
+        elseif n == 2 then
+          enc(3, step) -- Loop length in beats
+        end
+        -- Arc 3 and 4 are visual only (spool animation), no input
+      elseif global_screen == 2 then
+        -- Tempo: Arc 1 = BPM, Arc 2 = Swing
+        if n == 1 then
+          enc(2, step) -- BPM
+        elseif n == 2 then
+          enc(3, step) -- Swing
+        end
       end
-      -- Arc 3 and 4 are visual only (spool animation), no input
 
       -- Track modes (2-5) and Delay (6): Use standard mapping
     else
@@ -1085,29 +1182,39 @@ end
 function arc_redraw()
   a:all(0)
 
-  -- Tape Recorder (mode 1)
+  -- Global screens (mode 1)
   if screen_mode == 1 then
-    -- Arc 1: Current track selector (4 segments)
-    arc_utils.display_selector(a, 1, current_track + 1, 4)
-    -- Arc 2: Loop length in beats (1-64)
-    arc_utils.display_progress_bar(a, 2, params:get(get_track_param("loop_length_in_beats")), 1, 64)
+    if global_screen == 1 then
+      -- Tape Recorder
+      -- Arc 1: Current track selector (4 segments)
+      arc_utils.display_selector(a, 1, current_track + 1, 4)
+      -- Arc 2: Loop length in beats (1-64)
+      arc_utils.display_progress_bar(a, 2, params:get(get_track_param("loop_length_in_beats")), 1, 64)
 
-    -- Arc 3 & 4: Tape spool animation with 3 segments
-    local is_recording = params:get(get_track_param("record")) == 1
-    local loop_length = params:get(get_track_param("loop_length_in_beats"))
+      -- Arc 3 & 4: Tape spool animation with 3 segments
+      local is_recording = params:get(get_track_param("record")) == 1
+      local loop_length = params:get(get_track_param("loop_length_in_beats"))
 
-    -- Calculate rotation (only moves when recording)
-    local time_based_rotation = 0
-    if is_recording then
-      -- Speed inversely proportional to loop length (longer loops = slower rotation)
-      local rotation_speed = 1 / math.max(1, loop_length / 8) -- Normalize to reasonable speed
-      time_based_rotation = (util.time() * rotation_speed) % 1
+      -- Calculate rotation (only moves when recording)
+      local time_based_rotation = 0
+      if is_recording then
+        -- Speed inversely proportional to loop length (longer loops = slower rotation)
+        local rotation_speed = 1 / math.max(1, loop_length / 8) -- Normalize to reasonable speed
+        time_based_rotation = (util.time() * rotation_speed) % 1
+      end
+
+      -- Arc 3: Left spool with 3 segments
+      arc_utils.display_tape_spool(a, 3, time_based_rotation, is_recording)
+      -- Arc 4: Right spool with 3 segments (offset for visual variety)
+      arc_utils.display_tape_spool(a, 4, time_based_rotation + 0.33, is_recording)
+    elseif global_screen == 2 then
+      -- Tempo/Swing
+      -- Arc 1: BPM (20-300)
+      arc_utils.display_progress_bar(a, 1, clock.get_tempo(), 20, 300)
+      -- Arc 2: Swing (0-100)
+      arc_utils.display_progress_bar(a, 2, params:get("swing"), 0, 100)
+      -- Arc 3 & 4: Visual feedback (could show clock pulses)
     end
-
-    -- Arc 3: Left spool with 3 segments
-    arc_utils.display_tape_spool(a, 3, time_based_rotation, is_recording)
-    -- Arc 4: Right spool with 3 segments (offset for visual variety)
-    arc_utils.display_tape_spool(a, 4, time_based_rotation + 0.33, is_recording)
     -- Tracks 1-4 (modes 2-5)
   elseif screen_mode >= 2 and screen_mode <= 5 then
     local current_screen = selected_voice_screen[current_track + 1]
@@ -1140,7 +1247,12 @@ function arc_redraw()
     end
     -- Delay (mode 6)
   elseif screen_mode == 6 then
-    arc_utils.display_spread_pattern(a, 1, params:get("delay_time"), 0, 8)
+    -- Arc 1: Show delay division when synced, free time when not synced
+    if params:get("delay_sync") == 1 then
+      arc_utils.display_selector(a, 1, params:get("delay_division"), #utils.delay_divisions_as_strings)
+    else
+      arc_utils.display_spread_pattern(a, 1, params:get("delay_time"), 0, 8)
+    end
     arc_utils.display_spread_pattern(a, 2, params:get("delay_feedback"), 0, 1)
     arc_utils.display_progress_bar(a, 3, params:get("delay_mix"), 0, 1)
     arc_utils.display_progress_bar(a, 4, params:get("rotate"), 0, 1)
@@ -1265,6 +1377,8 @@ function start_recording(track)
   local step_division = params:get(get_track_param("step_division", track))
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
+  -- Reset recorder phase to sync with playback
+  engine.resetRecorder(track)
   engine.record(track, 1)
 end
 
@@ -1299,6 +1413,17 @@ function start_sequence()
         end
 
         was_playing = is_playing
+
+        -- Apply swing to off-beats (even step counter values)
+        if is_playing and i % 2 == 0 then
+          local swing_amount = params:get("swing") / 100  -- 0 to 1
+          -- Swing at 50% = no delay, higher values delay the off-beat
+          local swing_ratio = (swing_amount - 0.5) * 2  -- Map 50-100% to 0-1
+          if swing_ratio > 0 then
+            local swing_delay = swing_ratio * track_division * 4
+            clock.sync(swing_delay)
+          end
+        end
 
         -- Only advance sequence and trigger sounds when playing
         if is_playing then
