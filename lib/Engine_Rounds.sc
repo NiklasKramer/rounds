@@ -104,7 +104,7 @@ Engine_Rounds : CroneEngine {
 
         // Simple buffer synth (unchanged - works for any track)
         SynthDef(\simpleBufferSynth, {
-            |bufnumL, bufnumR, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.1, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance = 1, hipassFreq = 1,
+            |bufnumL, bufnumR, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.5, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance = 1, hipassFreq = 1,
             out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
             ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1, sampleOrRecord = 0, loopLength = 1|
 
@@ -208,8 +208,8 @@ Engine_Rounds : CroneEngine {
             delayedSignal = LPF.ar(HPF.ar(delayedSignal, hpf), lpf);
 
             LocalOut.ar(delayedSignal);
-            
-            Out.ar(out, 1 - mix * inputSignal + (mix * delayedSignal));
+
+            Out.ar(out, Limiter.ar(1 - mix * inputSignal + (mix * delayedSignal), 0.99, 0.01));
         }).add;
 
         SynthDef(\continuousRecorder, {
@@ -426,7 +426,7 @@ Engine_Rounds : CroneEngine {
                 \startSegment, startSegment,
                 \endSegment, startSegment + 1,
                 \numSegments, numSegmentsList[trackIndex],
-                \amp, amp.clip(0, 1),
+                \amp, amp.clip(0, 3),
                 \rate, rate,
                 \pan, pan,
                 \out, delayBus,
