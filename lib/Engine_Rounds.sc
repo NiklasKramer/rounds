@@ -515,6 +515,73 @@ Engine_Rounds : CroneEngine {
         this.addCommand(\lagTime, "f", { |msg|
             warpDelay.set(\lagTime, msg[1]);
         });
+
+        // Buffer export/import for PSET support
+        this.addCommand(\writeBuffer, "is", { |msg|
+            var trackIndex = msg[1];
+            var path = msg[2].asString;
+            var pathL = path ++ "_L.wav";
+            var pathR = path ++ "_R.wav";
+
+            // Only write if in record mode and buffer has valid frames
+            if (sampleOrRecords[trackIndex] == 1 and: { recordBuffers[trackIndex].numFrames > 0 }) {
+                ("Writing track % buffers to: " ++ path).format(trackIndex + 1).postln;
+                recordBuffers[trackIndex].write(pathL, "wav", "int24", 0, -1, leaveOpen: false);
+                recordBuffersR[trackIndex].write(pathR, "wav", "int24", 0, -1, leaveOpen: false);
+            } {
+                ("Track %: skipping (no recorded data or not in record mode)").format(trackIndex + 1).postln;
+            };
+        });
+
+        this.addCommand(\readBuffer, "is", { |msg|
+            var trackIndex = msg[1];
+            var path = msg[2].asString;
+            var pathL = path ++ "_L.wav";
+            var pathR = path ++ "_R.wav";
+
+            // Check if files exist
+            if (File.exists(pathL) and: { File.exists(pathR) }) {
+                ("Loading track % buffers from: " ++ path).format(trackIndex + 1).postln;
+
+                // Temporarily stop recording during swap to avoid buffer access conflicts
+                recorders[trackIndex].set(\isRecording, 0);
+
+                // Read left channel first
+                Buffer.read(context.server, pathL, 0, -1, action: { |bufL|
+                    if (bufL.notNil) {
+                        // Read right channel
+                        Buffer.read(context.server, pathR, 0, -1, action: { |bufR|
+                            if (bufR.notNil) {
+                                // Both buffers loaded, now swap safely
+                                var oldBufL = recordBuffers[trackIndex];
+                                var oldBufR = recordBuffersR[trackIndex];
+
+                                recordBuffers[trackIndex] = bufL;
+                                recordBuffersR[trackIndex] = bufR;
+
+                                // Update recorder synth with new buffer numbers
+                                recorders[trackIndex].set(\bufnumL, bufL.bufnum);
+                                recorders[trackIndex].set(\bufnumR, bufR.bufnum);
+                                recorders[trackIndex].set(\loopLength, bufL.duration);
+
+                                // Free old buffers after a brief delay
+                                context.server.makeBundle(0.1, {
+                                    oldBufL.free;
+                                    oldBufR.free;
+                                });
+
+                                // Update loop length
+                                loopLengths[trackIndex] = bufL.duration;
+
+                                ("Track % buffers loaded: " ++ bufL.numFrames ++ " frames (" ++ bufL.duration ++ "s)").format(trackIndex + 1).postln;
+                            };
+                        });
+                    };
+                });
+            } {
+                ("Track % buffer files not found at: " ++ path).format(trackIndex + 1).postln;
+            };
+        });
     }
 
     // Free resources

@@ -67,6 +67,29 @@ function init()
   update_delay_time()
   update_record_time()
 
+  -- Hook into PSET save/load for buffer export/import
+  params.action_write = function(filename, name, number)
+    save_buffers(number)
+  end
+
+  params.action_read = function(filename, silent, number)
+    -- Stop all tracks immediately to prevent playing with unloaded buffers
+    for track = 0, num_tracks - 1 do
+      params:set(get_track_param("play", track), 0)
+    end
+
+    clock.run(function()
+      clock.sleep(1.5) -- Wait for params to load and engine to stabilize
+      load_buffers(number)
+      clock.sleep(0.5) -- Wait for async buffer loading to complete
+      print("=== PSET LOAD COMPLETE - READY TO PLAY ===")
+    end)
+  end
+
+  params.action_delete = function(filename, name, number)
+    delete_buffers(number)
+  end
+
   g.key = function(x, y, z)
     grid_key(x, y, z)
   end
@@ -1138,6 +1161,88 @@ function file_select_callback(file_path)
   end
 
   redraw()
+end
+
+-- BUFFER EXPORT/IMPORT FOR PSET SUPPORT
+function save_buffers(pset_number)
+  -- Create directory if it doesn't exist
+  local dir = _path.audio .. "rounds/"
+  os.execute("mkdir -p \"" .. dir .. "\"")
+
+  print("=== SAVING BUFFERS FOR PSET " .. pset_number .. " ===")
+  print("Directory: " .. dir)
+
+  -- Save all tracks' record buffers
+  for track = 0, num_tracks - 1 do
+    local path = dir .. "pset_" .. pset_number .. "_track_" .. (track + 1)
+    local mode = params:get(get_track_param("sample_or_record", track))
+
+    print("Track " .. (track + 1) .. ": mode=" .. mode)
+
+    -- Only save if track is in record mode
+    if mode == 1 then
+      engine.writeBuffer(track, path)
+      print("  -> Writing to: " .. path)
+    else
+      print("  -> Skipping (sample mode)")
+    end
+  end
+
+  print("=== BUFFER SAVE REQUESTED ===")
+end
+
+function load_buffers(pset_number)
+  local dir = _path.audio .. "rounds/"
+
+  print("=== LOADING BUFFERS FOR PSET " .. pset_number .. " ===")
+  print("Directory: " .. dir)
+
+  -- Check if directory exists
+  local check_dir = io.popen("ls -la \"" .. dir .. "\" 2>&1")
+  if check_dir then
+    print("Directory contents:")
+    print(check_dir:read("*a"))
+    check_dir:close()
+  end
+
+  -- Load all tracks' record buffers
+  for track = 0, num_tracks - 1 do
+    local path = dir .. "pset_" .. pset_number .. "_track_" .. (track + 1)
+    local file_l = path .. "_L.wav"
+    local file_r = path .. "_R.wav"
+
+    -- Check if files exist
+    local exists_l = io.open(file_l, "r")
+    local exists_r = io.open(file_r, "r")
+
+    if exists_l and exists_r then
+      exists_l:close()
+      exists_r:close()
+      print("Track " .. (track + 1) .. ": Found files, loading...")
+      engine.readBuffer(track, path)
+    else
+      if exists_l then exists_l:close() end
+      if exists_r then exists_r:close() end
+      print("Track " .. (track + 1) .. ": No saved buffers found")
+    end
+  end
+
+  print("=== BUFFER LOAD REQUESTED ===")
+end
+
+function delete_buffers(pset_number)
+  local dir = _path.audio .. "rounds/"
+
+  print("Deleting recorded buffers for PSET " .. pset_number)
+
+  -- Delete all tracks' record buffer files
+  for track = 0, num_tracks - 1 do
+    local base_path = dir .. "pset_" .. pset_number .. "_track_" .. (track + 1)
+    os.execute("rm -f \"" .. base_path .. "_L.wav\"")
+    os.execute("rm -f \"" .. base_path .. "_R.wav\"")
+  end
+
+  print("Buffer delete complete")
 end
 
 -- CLOCK
