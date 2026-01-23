@@ -22,6 +22,7 @@ local circle_x, circle_y = screen_w / 2, screen_h / 2
 record_pointer = 0
 
 local current_track = 0
+local prev_track = 0
 local tape_selected_track = 0
 local num_tracks = 4
 local selected_voice_screen = { 1, 1, 1, 1 }
@@ -430,6 +431,12 @@ function redraw()
 
   if screen_mode >= 2 and screen_mode <= 5 then
     current_track = screen_mode - 2
+  end
+
+  -- Update displays if track changed
+  if current_track ~= prev_track then
+    update_track_displays()
+    prev_track = current_track
   end
 
   -- Draw the main screen components
