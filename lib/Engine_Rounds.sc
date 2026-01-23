@@ -269,16 +269,17 @@ Engine_Rounds : CroneEngine {
         };
 
         warpDelay = Synth.new(\warpDelay, [
-            \in, delayBus, 
-            \out, context.out_b.index, 
-            \delay, 0.2, 
-            \time, 10,
+            \in, delayBus,
+            \out, context.out_b.index,
+            \delay, 0.2,
+            \time, 1,
             \hpf, 330,
             \lpf, 8200,
             \w_rate, 0.667,
             \w_depth, 0.00027,
             \rotate, 0.0,
             \mix, 0.2,
+            \lagTime, 0.02,
         ], target: context.xg);
 
         context.server.sync;

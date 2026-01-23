@@ -336,7 +336,7 @@ function get_track_param(param_name, track)
 end
 
 function delay_params()
-  params:add_group("Delay", 11)
+  params:add_group("Delay", 12)
 
   params:add_taper("delay_mix", "Mix", 0, 1, 0.2, 0)
   params:set_action("delay_mix", function(value) engine.mix(value) end)
@@ -345,6 +345,9 @@ function delay_params()
   params:set_action('delay_sync', function(value)
     update_delay_time()
   end)
+
+  params:add_taper("delay_lag_time", "Lag Time", 0.001, 0.2, 0.02, 0.001, "s")
+  params:set_action("delay_lag_time", function(value) engine.lagTime(value) end)
 
   params:add_option("delay_subdivision_type", "Subdivision Type", { "Straight", "Dotted", "Triplet" }, 1)
   params:set_action("delay_subdivision_type", function(value)
@@ -363,8 +366,12 @@ function delay_params()
     end
   end)
 
-  params:add_taper("delay_feedback", "Feedback", 0, 20, 1, 0)
-  params:set_action("delay_feedback", function(value) engine.time(value) end)
+  params:add_taper("delay_feedback", "Feedback", 0, 1, 0.4, 0, "")
+  params:set_action("delay_feedback", function(value)
+    -- Map 0-1 exponentially to 0.1-30 seconds
+    local time = 0.1 * math.exp(value * math.log(300))
+    engine.time(time)
+  end)
 
   params:add_control("delay_lowpass", "Lowpass Frequency", controlspec.new(10, 20000, 'exp', 1, 20000, "hz"))
   params:set_action('delay_lowpass', function(value) engine.lpf(value) end)
@@ -911,10 +918,10 @@ function handle_delay_screen_enc(n, delta)
       if show_info_banner then
         -- Update Feedback value
         params:delta("delay_feedback", delta)
-        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+        set_show_info_banner('FB: ' .. string.format("%.0f%%", params:get("delay_feedback") * 100))
       else
         -- Show current Feedback value
-        set_show_info_banner('FB: ' .. string.format("%.2f", params:get("delay_feedback")))
+        set_show_info_banner('FB: ' .. string.format("%.0f%%", params:get("delay_feedback") * 100))
       end
     end
   end
@@ -1111,7 +1118,7 @@ function arc_redraw()
     -- Delay (mode 6)
   elseif screen_mode == 6 then
     arc_utils.display_spread_pattern(a, 1, params:get("delay_time"), 0, 8)
-    arc_utils.display_spread_pattern(a, 2, params:get("delay_feedback"), 0, 20)
+    arc_utils.display_spread_pattern(a, 2, params:get("delay_feedback"), 0, 1)
     arc_utils.display_progress_bar(a, 3, params:get("delay_mix"), 0, 1)
     arc_utils.display_progress_bar(a, 4, params:get("rotate"), 0, 1)
   end
