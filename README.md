@@ -45,15 +45,31 @@ All tracks share a **master delay effect** and sync to the global Norns clock.
 
 ---
 
-## Tape Recorder Screen
+## Global Screens
 
-The tape recorder allows you to record audio input for each track.
+Rounds has two global screens accessible via **Enc 1** (when in global mode):
+
+### Tape Recorder
+
+Record audio input for each track with beat-synced recording.
 
 - **Enc 2**: Select track (1-4)
 - **Enc 3**: Adjust recording buffer length (in beats, 1-64)
 - **Key 2**: Toggle between record and sample mode
 - **Key 3**: Start/stop recording
-- **Key 3 + Shift**: Arm recording (recording will start when playback begins)
+- **Key 3 + Shift**: Arm recording (starts when playback begins)
+
+Recording automatically syncs to beat boundaries when playback is active.
+
+### Tempo & Swing
+
+Control the global tempo and add swing to all tracks.
+
+- **Enc 2**: Adjust BPM (20-300)
+- **Enc 3**: Adjust Swing (0-100%)
+- **Key 3 + Shift**: Reset swing to 0%
+
+Swing values above 50% delay off-beats for a shuffled feel.
 
 ---
 
@@ -120,7 +136,8 @@ The delay affects all four tracks as a master effect.
 When an Arc is connected, it provides visual feedback and direct control:
 
 - **Tape Screen**: Track selector, loop length, animated reels
+- **Tempo Screen**: BPM and swing controls
 - **Track Screens**: Pattern, division, direction, steps, and all parameters mapped to encoders
-- **Delay Screen**: Time, feedback, mix, and rotate
+- **Delay Screen**: Time/division, feedback, mix, and rotate
 
 ---

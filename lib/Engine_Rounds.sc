@@ -220,13 +220,10 @@ Engine_Rounds : CroneEngine {
             signalL = SoundIn.ar(inputBus);
             signalR = SoundIn.ar(inputBus + 1);
 
-            // Calculate end frame based on loopLength
             endFrame = loopLength * SampleRate.ir;
-
-            // Create a trigger when reset changes from 0 to positive
             resetTrig = Trig.kr(reset, 0.001);
 
-            // Phasor runs continuously, resets when triggered
+            // Free-running Phasor stays in sync with time, resets on beat boundaries
             pos = Phasor.ar(
                 trig: resetTrig,
                 rate: rate * BufRateScale.kr(bufnumL),
@@ -235,16 +232,14 @@ Engine_Rounds : CroneEngine {
                 resetPos: 0
             );
 
-            // Read existing audio from the buffer
             existingLeft = BufRd.ar(1, bufnumL, pos, loop: loop);
             existingRight = BufRd.ar(1, bufnumR, pos, loop: loop);
 
-            // Mix the existing audio with the incoming signal
+            // Crossfade between existing buffer content and new input
             mixedLeft = ((existingLeft * (1 - isRecording)) + (signalL * isRecording));
             mixedRight = ((existingRight * (1 - isRecording)) + (signalR * isRecording));
 
-            // Write audio to the buffer only if recording is active
-            BufWr.ar(mixedLeft, bufnumL, pos, loop: loop); 
+            BufWr.ar(mixedLeft, bufnumL, pos, loop: loop);
             BufWr.ar(mixedRight, bufnumR, pos, loop: loop);
 
             // Output normalized position
@@ -474,7 +469,6 @@ Engine_Rounds : CroneEngine {
         this.addCommand(\resetRecorder, "i", { |msg|
             var trackIndex = msg[1];
             recorders[trackIndex].set(\reset, 1);
-            // Reset back to 0 after a brief moment to allow retriggering
             context.server.makeBundle(0.01, {
                 recorders[trackIndex].set(\reset, 0);
             });
@@ -528,17 +522,14 @@ Engine_Rounds : CroneEngine {
             warpDelay.set(\lagTime, msg[1]);
         });
 
-        // Buffer export/import for PSET support
         this.addCommand(\writeBuffer, "is", { |msg|
             var trackIndex = msg[1];
             var path = msg[2].asString;
             var pathL = path ++ "_L.wav";
             var pathR = path ++ "_R.wav";
 
-            // Only write if in record mode and buffer has valid frames
             if (sampleOrRecords[trackIndex] == 1 and: { recordBuffers[trackIndex].numFrames > 0 }) {
                 ("Writing track % buffers: " ++ recordBuffers[trackIndex].numFrames ++ " frames (" ++ recordBuffers[trackIndex].duration ++ "s) to: " ++ path).format(trackIndex + 1).postln;
-                // Write entire buffer: numFrames=-1 (all), startFrame=0
                 recordBuffers[trackIndex].write(pathL, headerFormat: "wav", sampleFormat: "int24",
                     numFrames: -1, startFrame: 0, leaveOpen: false);
                 recordBuffersR[trackIndex].write(pathR, headerFormat: "wav", sampleFormat: "int24",
