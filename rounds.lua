@@ -43,15 +43,12 @@ local metro_info_banner
 local info_banner_text = ""
 
 -- Step and Pattern Configuration
-local steps = 16
-local active_step = 0
-local active_steps = { 0, 0, 0, 0 }    -- Independent step position for each track
-local pattern_indices = { 1, 1, 1, 1 } -- Independent pattern position for each track
-local step_counters = { 1, 1, 1, 1 }   -- Independent step counters for each track
+local active_steps = { 0, 0, 0, 0 }
+local pattern_indices = { 1, 1, 1, 1 }
+local step_counters = { 1, 1, 1, 1 }
 
 -- Timing and Clock
-local play_clock_id = 0
-local reocord_clock_id = 0
+local record_clock_id = 0
 
 -- Envelope and Filter Graphics
 local env_graph
@@ -97,8 +94,8 @@ function init()
     grid_key(x, y, z)
   end
 
-  -- Auto-start the sequencer (tracks control themselves with play param)
-  play_clock_id = clock.run(start_sequence)
+  -- Auto-start the sequencer
+  clock.run(start_sequence)
 end
 
 function init_polls()
@@ -442,14 +439,8 @@ end
 
 -- Helper to update displays when switching tracks
 function update_track_displays()
-  -- Update envelope graph
   update_env_graph()
-
-  -- Update filter graph
   update_filter_graph()
-
-  -- Update steps variable for display
-  steps = params:get(get_track_param("steps"))
 end
 
 -- SCREENS
@@ -914,8 +905,7 @@ function handle_step_circle_enc(n, delta)
       local current_steps = params:get(get_track_param("steps"))
       local new_steps = utils.clamp(current_steps + delta, 4, 64)
       params:set(get_track_param("steps"), new_steps)
-      steps = new_steps
-      engine.steps(current_track, steps)
+      engine.steps(current_track, new_steps)
     else
       utils.handle_param_change(get_track_param("step_division"), delta, 1, #utils.division_factors, 1, "lin")
     end
@@ -1402,13 +1392,6 @@ function start_sequence()
 
           -- Update active step for this track
           active_steps[track + 1] = index
-
-          -- Set global active step for current track (for visual feedback)
-          if track == current_track then
-            active_pattern_step = pattern_index
-            active_step = index
-            steps = track_num_steps -- Update global steps for display
-          end
 
           if current_pattern[pattern_index] == 1 then
             local active = params:get(track_prefix .. "active_" .. index) == 1
