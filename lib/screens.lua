@@ -40,6 +40,7 @@ end
 
 function screens.draw_mode_indicator(num_modes, current_mode)
     local indicator_width = 1
+    local indicator_width_selected = 2 -- Wider when selected
     local indicator_height = 3
     local indicator_spacing = 2
     local group_spacing = 4 -- Extra spacing between groups
@@ -64,15 +65,19 @@ function screens.draw_mode_indicator(num_modes, current_mode)
             y_position = y_position + group_spacing
         end
 
-        local x_position = screen_w - indicator_width - 2 -- Align to the right side
+        local is_selected = i == current_mode
+        -- Only make it wider for track modes (2-5), not tape (1) or delay (6)
+        local is_track_mode = i >= 2 and i <= 5
+        local width = (is_selected and is_track_mode) and indicator_width_selected or indicator_width
+        local x_position = screen_w - width - 2 -- Align to the right side
 
-        if i == current_mode then
+        if is_selected then
             screen.level(15)
         else
             screen.level(3)
         end
 
-        screen.rect(x_position, y_position, indicator_width, indicator_height)
+        screen.rect(x_position, y_position, width, indicator_height)
         screen.fill()
     end
 end
