@@ -2012,47 +2012,47 @@ function start_sequence()
           -- Update active step for this track
           active_steps[track + 1] = index
 
-          if current_pattern[pattern_index] == 1 then
-            local active = params:get(track_prefix .. "active_" .. index) == 1
-            if active then
-              local start_segment = params:get(track_prefix .. "segment" .. index)
-              local reverse = params:get(track_prefix .. "reverse" .. index)
-              local step_amp = params:get(track_prefix .. "amp" .. index)
-              local step_pan = params:get(track_prefix .. "pan" .. index)
+          -- Check if step is active before processing
+          local active = params:get(track_prefix .. "active_" .. index) == 1
 
-              -- Get track-level pan and volume
-              local track_pan = params:get(track_prefix .. "pan")
-              local track_volume = params:get(track_prefix .. "volume")
+          if active and current_pattern[pattern_index] == 1 then
+            local start_segment = params:get(track_prefix .. "segment" .. index)
+            local reverse = params:get(track_prefix .. "reverse" .. index)
+            local step_amp = params:get(track_prefix .. "amp" .. index)
+            local step_pan = params:get(track_prefix .. "pan" .. index)
 
-              -- Combine step amp with track volume
-              local amp = step_amp * track_volume
+            -- Get track-level pan and volume
+            local track_pan = params:get(track_prefix .. "pan")
+            local track_volume = params:get(track_prefix .. "volume")
 
-              -- Combine step pan with track pan (average weighted by track pan strength)
-              local pan = step_pan * 0.5 + track_pan * 0.5
+            -- Combine step amp with track volume
+            local amp = step_amp * track_volume
 
-              -- Base semitones
-              local semitones = params:get(track_prefix .. "semitones")
+            -- Combine step pan with track pan (average weighted by track pan strength)
+            local pan = step_pan * 0.5 + track_pan * 0.5
 
-              -- Apply random scale note
-              local scale_index = params:get(track_prefix .. "random_scale")
-              local scale_name = utils.scale_names[scale_index]
-              local selected_scale = utils.scales[scale_name]
+            -- Base semitones
+            local semitones = params:get(track_prefix .. "semitones")
 
-              if selected_scale and math.random() < params:get(track_prefix .. "random_fifth") then
-                local scale_add = selected_scale[math.random(1, #selected_scale)]
-                semitones = semitones + scale_add
-              end
+            -- Apply random scale note
+            local scale_index = params:get(track_prefix .. "random_scale")
+            local scale_name = utils.scale_names[scale_index]
+            local selected_scale = utils.scales[scale_name]
 
-              -- Apply random octave
-              if math.random() < params:get(track_prefix .. "random_octave") then
-                semitones = semitones + 12
-              end
-
-              -- Calculate playback rate
-              local rate = math.pow(2, semitones / 12)
-
-              engine.play(track, start_segment, amp, rate, pan, reverse)
+            if selected_scale and math.random() < params:get(track_prefix .. "random_fifth") then
+              local scale_add = selected_scale[math.random(1, #selected_scale)]
+              semitones = semitones + scale_add
             end
+
+            -- Apply random octave
+            if math.random() < params:get(track_prefix .. "random_octave") then
+              semitones = semitones + 12
+            end
+
+            -- Calculate playback rate
+            local rate = math.pow(2, semitones / 12)
+
+            engine.play(track, start_segment, amp, rate, pan, reverse)
           end
 
           -- Advance this track's counters
@@ -2061,10 +2061,15 @@ function start_sequence()
 
           if i > track_num_steps then i = 1 end
           if pattern_index > pattern_length then pattern_index = 1 end
-        end
 
-        -- Always sync to clock to maintain beat alignment (even when stopped)
-        clock.sync(track_division * 4)
+          -- Only sync clock if step was active (skip inactive steps without pause)
+          if active then
+            clock.sync(track_division * 4)
+          end
+        else
+          -- When stopped, sync to maintain clock alignment
+          clock.sync(track_division * 4)
+        end
       end
     end)
   end
