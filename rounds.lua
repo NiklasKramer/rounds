@@ -47,6 +47,20 @@ local active_steps = { 0, 0, 0, 0 }
 local pattern_indices = { 1, 1, 1, 1 }
 local step_counters = { 1, 1, 1, 1 }
 
+-- Pattern Recording (Automation) - Based on MSG implementation
+local num_pattern_slots = 8  -- Columns 5-12 on grid (8 slots, symmetrical)
+local pattern_banks = {}     -- Stores recorded param changes per slot
+local pattern_timers = {}    -- Metro timers for playback
+local pattern_positions = {} -- Playback positions
+local record_slot = -1       -- Currently recording slot (-1 = none)
+local record_prevtime = -1   -- Previous event time for delta calculation
+
+-- Initialize pattern storage
+for i = 1, num_pattern_slots do
+  pattern_banks[i] = {}
+  table.insert(pattern_positions, 1)
+end
+
 -- Timing and Clock
 local record_clock_id = 0
 
@@ -102,6 +116,7 @@ function init_polls()
   metro_screen_refresh = metro.init(function(stage)
     redraw()
     arc_redraw()
+    grid_redraw()
   end, 1 / 60)
   metro_screen_refresh:start()
 
@@ -130,6 +145,129 @@ function init_polls()
     show_info_banner = false
     redraw()
   end, 0.6)
+
+  -- Initialize pattern timers for automation playback
+  for i = 1, num_pattern_slots do
+    pattern_timers[i] = metro.init(function() pattern_next(i) end)
+  end
+end
+
+-- PATTERN RECORDING FUNCTIONS (Automation)
+function record_pattern_event(param_id, value)
+  if record_slot <= 0 then return end
+
+  local current_time = util.time()
+  local delta = current_time - (record_prevtime > 0 and record_prevtime or current_time)
+  table.insert(pattern_banks[record_slot], { delta, param_id, value })
+  record_prevtime = current_time
+end
+
+-- Wrapper to set param and record if pattern recording is active
+function param_set_and_record(param_id, value)
+  params:set(param_id, value)
+  if record_slot > 0 then
+    record_pattern_event(param_id, value)
+  end
+end
+
+-- Override utils.handle_param_change to include recording
+local original_handle_param_change = utils.handle_param_change
+utils.handle_param_change = function(param_name, delta, min_val, max_val, step, scale_type)
+  original_handle_param_change(param_name, delta, min_val, max_val, step, scale_type, function(param_id, value)
+    if record_slot > 0 then
+      record_pattern_event(param_id, value)
+    end
+  end)
+end
+
+-- Calculate optimal grid dimensions for step display (as square as possible)
+function calculate_step_grid_dimensions(num_steps)
+  -- Try to make a square-ish grid, but limit to 6 rows max (rows 2-7)
+  -- to avoid overlapping with pattern recorder on row 8
+  local cols = math.ceil(math.sqrt(num_steps))
+  local rows = math.ceil(num_steps / cols)
+
+  -- For common step counts, use nice layouts
+  -- Max 6 rows (to avoid pattern recorder), max 14 cols (columns 2-15)
+  if num_steps == 16 then
+    cols, rows = 4, 4
+  elseif num_steps == 32 then
+    cols, rows = 8, 4
+  elseif num_steps == 64 then
+    cols, rows = 11, 6  -- Changed from 8x8 to fit in 6 rows
+  elseif num_steps == 24 then
+    cols, rows = 6, 4
+  elseif num_steps == 48 then
+    cols, rows = 8, 6
+  elseif num_steps <= 8 then
+    cols, rows = num_steps, 1
+  elseif num_steps <= 12 then
+    cols, rows = 4, 3
+  end
+
+  -- Ensure we don't exceed 6 rows
+  if rows > 6 then
+    cols = math.ceil(num_steps / 6)
+    rows = 6
+  end
+
+  return cols, rows
+end
+
+function start_pattern_playback(n)
+  pattern_timers[n]:start(0.001, 1)
+end
+
+function stop_pattern_playback(n)
+  pattern_timers[n]:stop()
+  pattern_positions[n] = 1
+end
+
+function arm_pattern_recording(n)
+  record_slot = n
+  record_prevtime = -1
+end
+
+function stop_pattern_recording()
+  if record_slot < 1 or record_slot > num_pattern_slots then return end
+
+  local recorded_events = #pattern_banks[record_slot]
+  if recorded_events > 0 then
+    local current_time = util.time()
+    local final_delta = current_time - record_prevtime
+    pattern_banks[record_slot][1][1] = final_delta
+    start_pattern_playback(record_slot)
+  end
+
+  record_slot = -1
+  record_prevtime = -1
+end
+
+function pattern_next(n)
+  local bank = pattern_banks[n]
+  local pos = pattern_positions[n]
+
+  if pos > #bank then
+    pattern_positions[n] = 1
+    pos = 1
+  end
+
+  local event = bank[pos]
+  if event then
+    local delta, param_id, value = table.unpack(event)
+    params:set(param_id, value)
+
+    -- Schedule next event
+    local next_pos = pos + 1
+    if next_pos > #bank then
+      next_pos = 1
+    end
+    pattern_positions[n] = next_pos
+
+    local next_event = bank[next_pos]
+    local next_delta = next_event and next_event[1] or 1
+    pattern_timers[n]:start(next_delta, 1)
+  end
 end
 
 function init_params()
@@ -896,7 +1034,11 @@ function handle_step_circle_enc(n, delta)
       local current = params:get(get_track_param("direction"))
       local new_direction = utils.clamp(current + delta, 1, 3)
       print("Changing direction from", current, "to", new_direction)
-      params:set(get_track_param("direction"), new_direction)
+      local param_id = get_track_param("direction")
+      params:set(param_id, new_direction)
+      if record_slot > 0 then
+        record_pattern_event(param_id, new_direction)
+      end
     else
       utils.handle_param_change(get_track_param("pattern"), delta, 1, #utils.patterns, 1, "lin")
     end
@@ -904,8 +1046,12 @@ function handle_step_circle_enc(n, delta)
     if shift then
       local current_steps = params:get(get_track_param("steps"))
       local new_steps = utils.clamp(current_steps + delta, 4, 64)
-      params:set(get_track_param("steps"), new_steps)
+      local param_id = get_track_param("steps")
+      params:set(param_id, new_steps)
       engine.steps(current_track, new_steps)
+      if record_slot > 0 then
+        record_pattern_event(param_id, new_steps)
+      end
     else
       utils.handle_param_change(get_track_param("step_division"), delta, 1, #utils.division_factors, 1, "lin")
     end
@@ -946,6 +1092,9 @@ function handle_delay_screen_enc(n, delta)
       if show_info_banner then
         -- Update Mix value
         params:delta("delay_mix", delta)
+        if record_slot > 0 then
+          record_pattern_event("delay_mix", params:get("delay_mix"))
+        end
         set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
       else
         -- Show current Mix value
@@ -962,10 +1111,16 @@ function handle_delay_screen_enc(n, delta)
             local current = params:get("delay_division")
             local new_val = util.clamp(current + steps, 1, #utils.delay_divisions_as_strings)
             params:set("delay_division", new_val)
+            if record_slot > 0 then
+              record_pattern_event("delay_division", new_val)
+            end
           end
           set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
         else
           params:delta("delay_time", delta)
+          if record_slot > 0 then
+            record_pattern_event("delay_time", params:get("delay_time"))
+          end
           set_show_info_banner(string.format("%.2f", params:get("delay_time")))
         end
       else
@@ -982,6 +1137,9 @@ function handle_delay_screen_enc(n, delta)
       if show_info_banner then
         -- Update Rotate value
         params:delta("rotate", delta)
+        if record_slot > 0 then
+          record_pattern_event("rotate", params:get("rotate"))
+        end
         set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
       else
         -- Show current Rotate value
@@ -991,6 +1149,9 @@ function handle_delay_screen_enc(n, delta)
       if show_info_banner then
         -- Update Feedback value
         params:delta("delay_feedback", delta)
+        if record_slot > 0 then
+          record_pattern_event("delay_feedback", params:get("delay_feedback"))
+        end
         set_show_info_banner('FB: ' .. string.format("%.0f%%", params:get("delay_feedback") * 100))
       else
         -- Show current Feedback value
@@ -1024,7 +1185,11 @@ function handle_fifth_octave_enc(n, delta)
         local current_scale = params:get(get_track_param("random_scale"))
         local next_scale = utils.clamp(current_scale + delta, 1, #utils.scale_names)
         if next_scale ~= current_scale then
-          params:set(get_track_param("random_scale"), next_scale)
+          local param_id = get_track_param("random_scale")
+          params:set(param_id, next_scale)
+          if record_slot > 0 then
+            record_pattern_event(param_id, next_scale)
+          end
           set_show_info_banner("Scale: " .. utils.scale_names[next_scale])
         end
       else
@@ -1065,7 +1230,11 @@ function handle_record_enc(n, delta)
     current_track = util.clamp(current_track + delta, 0, num_tracks - 1)
   elseif n == 3 then
     -- Adjust loop length for current track
-    params:delta(get_track_param("loop_length_in_beats"), delta)
+    local param_id = get_track_param("loop_length_in_beats")
+    params:delta(param_id, delta)
+    if record_slot > 0 then
+      record_pattern_event(param_id, params:get(param_id))
+    end
   end
 end
 
@@ -1074,10 +1243,16 @@ function handle_tempo_enc(n, delta)
     local current_bpm = clock.get_tempo()
     local new_bpm = util.clamp(current_bpm + delta, 20, 300)
     params:set("clock_tempo", new_bpm)
+    if record_slot > 0 then
+      record_pattern_event("clock_tempo", new_bpm)
+    end
   elseif n == 3 then
     local current_swing = params:get("swing")
     local new_swing = util.clamp(current_swing + delta, 0, 100)
     params:set("swing", new_swing)
+    if record_slot > 0 then
+      record_pattern_event("swing", new_swing)
+    end
   end
 end
 
@@ -1145,6 +1320,273 @@ a.key = function(n, z)
   end
 end
 
+-- GRID
+function grid_key(x, y, z)
+  -- Row 8, Column 1: Shift button (hold to clear patterns)
+  if x == 1 and y == 8 then
+    shift = (z == 1)
+    return
+  end
+
+  if z == 1 then  -- Button press
+    -- Row 8, Columns 5-12: Pattern recording slots (8 slots)
+    if y == 8 and x >= 5 and x <= 12 then
+      local slot = x - 4  -- Convert column to slot number (1-8)
+
+      -- Clear pattern if shift is held
+      if shift then
+        if slot == record_slot then
+          stop_pattern_recording()
+        end
+        if pattern_timers[slot].is_running then
+          stop_pattern_playback(slot)
+        end
+        pattern_banks[slot] = {}
+        set_show_info_banner("PATTERN " .. slot .. " CLEARED", "center")
+        return
+      end
+
+      if slot == record_slot then
+        -- Stop recording if currently recording this slot
+        stop_pattern_recording()
+        set_show_info_banner("PATTERN " .. slot .. " SAVED", "center")
+      else
+        local has_data = #pattern_banks[slot] > 0
+
+        if has_data then
+          -- Toggle playback if slot has data
+          if pattern_timers[slot].is_running then
+            stop_pattern_playback(slot)
+            set_show_info_banner("PATTERN " .. slot .. " STOPPED", "center")
+          else
+            start_pattern_playback(slot)
+            set_show_info_banner("PATTERN " .. slot .. " PLAYING", "center")
+          end
+        else
+          -- Arm new recording if slot is empty
+          if record_slot > 0 then
+            stop_pattern_recording()
+          end
+          pattern_banks[slot] = {}  -- Clear slot
+          arm_pattern_recording(slot)
+          set_show_info_banner("RECORDING PATTERN " .. slot, "center")
+        end
+      end
+    end
+
+    -- Column 16 (rightmost): Main mode selection
+    if x == 16 then
+      -- Row 1: Tape (mode 1)
+      if y == 1 then
+        if screen_mode == 1 then
+          -- Cycle through tape sub-screens
+          global_screen = (global_screen % number_of_global_screens) + 1
+        else
+          screen_mode = 1
+        end
+      -- Rows 2-5: Tracks 1-4 (modes 2-5)
+      elseif y >= 2 and y <= 5 then
+        if screen_mode == y then
+          -- Cycle through track sub-screens
+          selected_voice_screen[current_track + 1] = (selected_voice_screen[current_track + 1] % number_of_screens) + 1
+        else
+          screen_mode = y
+        end
+      -- Row 6: Delay (mode 6)
+      elseif y == 6 then
+        screen_mode = 6
+      end
+    end
+
+    -- Column 1 (leftmost): Sub-screen selection
+    if x == 1 then
+      if screen_mode == 1 then
+        -- Tape mode: 2 sub-screens
+        if y >= 1 and y <= number_of_global_screens then
+          global_screen = y
+        end
+      elseif screen_mode >= 2 and screen_mode <= 5 then
+        -- Track modes: 5 sub-screens each
+        if y >= 1 and y <= number_of_screens then
+          selected_voice_screen[current_track + 1] = y
+        end
+      end
+      -- Delay mode has no sub-screens
+    end
+
+    -- Step grid for screen 1 (sequencer) on track modes
+    if screen_mode >= 2 and screen_mode <= 5 then
+      local current_screen = selected_voice_screen[current_track + 1]
+      if current_screen == 1 then
+        -- Get current track's step count and calculate optimal grid
+        local track_steps = params:get(get_track_param("steps"))
+        local grid_cols, grid_rows = calculate_step_grid_dimensions(track_steps)
+
+        -- Center the grid horizontally (columns 3-14 available = 12 columns)
+        -- Column 2 free on left, column 15 free on right
+        local available_cols = 12
+        local start_col = 3 + math.floor((available_cols - grid_cols) / 2)
+        local start_row = 2
+
+        -- Check if press is in the step grid area
+        local end_col = start_col + grid_cols - 1
+        local end_row = start_row + grid_rows - 1
+
+        if y >= start_row and y <= end_row and x >= start_col and x <= end_col then
+          local row_offset = y - start_row
+          local col_offset = x - start_col
+          local step_index = row_offset * grid_cols + col_offset + 1
+
+          if step_index <= track_steps then
+            local track_prefix = "t" .. (current_track + 1) .. "_"
+
+            if shift then
+              -- Shift + step: toggle reverse
+              local reverse_param = track_prefix .. "reverse" .. step_index
+              local current_reverse = params:get(reverse_param)
+              params:set(reverse_param, 1 - current_reverse)
+            else
+              -- Normal press: toggle step on/off
+              local active_param = track_prefix .. "active_" .. step_index
+              local current_value = params:get(active_param)
+              params:set(active_param, 1 - current_value)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+function grid_redraw()
+  g:all(0)  -- Clear all LEDs
+
+  -- Row 8, Column 1: Shift button (brighter to distinguish from sub-screens)
+  g:led(1, 8, shift and 15 or 6)
+
+  -- Row 8, Columns 5-12: Pattern recording slots (8 slots)
+  for i = 1, num_pattern_slots do
+    local col = i + 4  -- Convert slot to column (5-12)
+    local brightness = 0
+
+    if record_slot == i then
+      -- Recording: bright
+      brightness = 15
+    elseif pattern_timers[i].is_running then
+      -- Playing back: bright
+      brightness = 12
+    elseif #pattern_banks[i] > 0 then
+      -- Has data: medium
+      brightness = 6
+    else
+      -- Empty: dim
+      brightness = 2
+    end
+
+    g:led(col, 8, brightness)
+  end
+
+  -- Column 16: Main mode indicators
+  -- Row 1: Tape (mode 1) - brighter to show it's global
+  if screen_mode == 1 then
+    g:led(16, 1, 15)
+  else
+    g:led(16, 1, 6)  -- Brighter when unselected
+  end
+
+  -- Rows 2-5: Tracks 1-4 (modes 2-5) - dimmer to show they're track-specific
+  for i = 2, 5 do
+    if screen_mode == i then
+      g:led(16, i, 10)  -- Less bright for tracks
+    else
+      g:led(16, i, 3)   -- Dimmer when unselected
+    end
+  end
+
+  -- Row 6: Delay (mode 6) - brighter to show it's global
+  if screen_mode == 6 then
+    g:led(16, 6, 15)
+  else
+    g:led(16, 6, 6)  -- Brighter when unselected
+  end
+
+  -- Column 1: Sub-screen indicators (dimmer than shift button)
+  if screen_mode == 1 then
+    -- Tape mode: show global screen options
+    for i = 1, number_of_global_screens do
+      if i == global_screen then
+        g:led(1, i, 12)  -- Bright but not as bright as shift
+      else
+        g:led(1, i, 3)   -- Dimmer when unselected
+      end
+    end
+  elseif screen_mode >= 2 and screen_mode <= 5 then
+    -- Track mode: show voice screen options
+    local current_screen = selected_voice_screen[current_track + 1]
+    for i = 1, number_of_screens do
+      if i == current_screen then
+        g:led(1, i, 12)  -- Bright but not as bright as shift
+      else
+        g:led(1, i, 3)   -- Dimmer when unselected
+      end
+    end
+
+    -- Display step grid for screen 1 (sequencer)
+    if current_screen == 1 then
+      local track_steps = params:get(get_track_param("steps"))
+      local current_step = active_steps[current_track + 1]
+      local grid_cols, grid_rows = calculate_step_grid_dimensions(track_steps)
+
+      -- Center the grid horizontally (columns 2-15 available = 14 columns)
+      -- Avoid column 1 (sub-screen select) and column 16 (mode select)
+      -- Rows 2-7 available (6 rows, avoiding row 8 pattern recorder)
+      local available_cols = 14
+      local start_col = 2 + math.floor((available_cols - grid_cols) / 2)
+      local start_row = 2
+      local track_prefix = "t" .. (current_track + 1) .. "_"
+
+      for step = 1, track_steps do
+        local row_offset = math.floor((step - 1) / grid_cols)
+        local col_offset = (step - 1) % grid_cols
+        local y = start_row + row_offset
+        local x = start_col + col_offset
+
+        local is_active = params:get(track_prefix .. "active_" .. step) == 1
+        local is_reverse = params:get(track_prefix .. "reverse" .. step) == 1
+        local is_current = step == current_step
+
+        local brightness = 0
+        if is_reverse then
+          -- Reversed steps have different brightness
+          if is_current and is_active then
+            brightness = 13  -- Current playing step (active, reversed)
+          elseif is_current then
+            brightness = 6   -- Current playing step (inactive, reversed)
+          elseif is_active then
+            brightness = 7   -- Active step (reversed)
+          else
+            brightness = 2   -- Inactive step (reversed - same as normal inactive)
+          end
+        else
+          -- Normal (forward) steps
+          if is_current and is_active then
+            brightness = 15  -- Current playing step (active)
+          elseif is_current then
+            brightness = 8   -- Current playing step (inactive)
+          elseif is_active then
+            brightness = 10  -- Active step
+          else
+            brightness = 2   -- Inactive step
+          end
+        end
+
+        g:led(x, y, brightness)
+      end
+    end
+  end
+
+  g:refresh()
+end
 
 function arc_redraw()
   a:all(0)

@@ -76,7 +76,7 @@ function utils.clamp(value, min, max)
 end
 
 -- Utilsity function for parameter handling with linear and exponential scaling
-function utils.handle_param_change(param_name, delta, min_val, max_val, step, scale_type)
+function utils.handle_param_change(param_name, delta, min_val, max_val, step, scale_type, record_callback)
     local current_value = params:get(param_name)
     local new_value
 
@@ -87,6 +87,11 @@ function utils.handle_param_change(param_name, delta, min_val, max_val, step, sc
     end
 
     params:set(param_name, new_value)
+
+    -- Call recording callback if provided
+    if record_callback then
+        record_callback(param_name, new_value)
+    end
 end
 
 return utils
