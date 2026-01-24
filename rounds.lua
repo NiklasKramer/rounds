@@ -4,6 +4,7 @@
 engine.name = 'Rounds'
 -- ARC rotary input smoothing buffer
 local arc_buffer = { 0, 0, 0, 0 }
+local direction_accumulator = 0  -- Accumulator for playback direction changes
 local g = grid.connect()
 local EnvGraph = require "envgraph"
 local FilterGraph = require "filtergraph"
@@ -1030,14 +1031,21 @@ end
 function handle_step_circle_enc(n, delta)
   if n == 2 then
     if shift then
-      -- Clamp direction between 1 and 3, no wrapping
-      local current = params:get(get_track_param("direction"))
-      local new_direction = utils.clamp(current + delta, 1, 3)
-      print("Changing direction from", current, "to", new_direction)
-      local param_id = get_track_param("direction")
-      params:set(param_id, new_direction)
-      if record_slot > 0 then
-        record_pattern_event(param_id, new_direction)
+      -- Use accumulator for smoother direction changes (requires 3 steps)
+      direction_accumulator = direction_accumulator + delta
+
+      if math.abs(direction_accumulator) >= 3 then
+        local steps = math.floor(direction_accumulator / 3)
+        direction_accumulator = direction_accumulator - (steps * 3)
+
+        local current = params:get(get_track_param("direction"))
+        local new_direction = utils.clamp(current + steps, 1, 3)
+        print("Changing direction from", current, "to", new_direction)
+        local param_id = get_track_param("direction")
+        params:set(param_id, new_direction)
+        if record_slot > 0 then
+          record_pattern_event(param_id, new_direction)
+        end
       end
     else
       utils.handle_param_change(get_track_param("pattern"), delta, 1, #utils.patterns, 1, "lin")
