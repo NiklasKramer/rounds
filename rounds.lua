@@ -20,12 +20,14 @@ local screen_w, screen_h = 128, 64
 local circle_x, circle_y = screen_w / 2, screen_h / 2
 
 record_pointer = 0
+local recording_track = -1  -- Track which track is currently recording (-1 = none)
 
 local current_track = 0
 local prev_track = 0
 local tape_selected_track = 0
 local num_tracks = 4
 local selected_voice_screen = { 1, 1, 1, 1 }
+local keyboard_octave = { 0, 0, 0, 0 }  -- Track which octave the keyboard is viewing (per track)
 local number_of_screens = 5
 local screen_modes = 6
 local screen_mode = 2
@@ -62,6 +64,20 @@ for i = 1, num_pattern_slots do
   table.insert(pattern_positions, 1)
 end
 
+-- Snapshots (per-track)
+local num_snapshots = 4  -- Row 1, columns 7-10 (centered)
+local snapshot_banks = {}  -- Stores param states per snapshot per track
+local active_snapshot = {}  -- Currently active/recalled snapshot per track (-1 = none)
+
+-- Initialize snapshot storage (4 tracks, each with 4 snapshots)
+for track = 1, num_tracks do
+  snapshot_banks[track] = {}
+  active_snapshot[track] = -1
+  for slot = 1, num_snapshots do
+    snapshot_banks[track][slot] = {}
+  end
+end
+
 -- Timing and Clock
 local record_clock_id = 0
 
@@ -82,9 +98,10 @@ function init()
   update_delay_time()
   update_record_time()
 
-  -- Hook into PSET save/load for buffer export/import
+  -- Hook into PSET save/load for buffer export/import and patterns/snapshots
   params.action_write = function(filename, name, number)
     save_buffers(number)
+    save_patterns_and_snapshots(number)
   end
 
   params.action_read = function(filename, silent, number)
@@ -96,6 +113,7 @@ function init()
     clock.run(function()
       clock.sleep(1.5) -- Wait for params to load and engine to stabilize
       load_buffers(number)
+      load_patterns_and_snapshots(number)
       clock.sleep(0.5) -- Wait for async buffer loading to complete
       print("=== PSET LOAD COMPLETE - READY TO PLAY ===")
     end)
@@ -103,6 +121,7 @@ function init()
 
   params.action_delete = function(filename, name, number)
     delete_buffers(number)
+    delete_patterns_and_snapshots(number)
   end
 
   g.key = function(x, y, z)
@@ -124,20 +143,13 @@ function init_polls()
 
 
   record_pointer_poll = poll.set('recorderPos', function(value)
-    -- Check if any track is currently recording
-    local any_recording = false
-    for track = 0, num_tracks - 1 do
-      if params:get(get_track_param("record", track)) == 1 then
-        any_recording = true
-        break
-      end
-    end
-
-    if any_recording then
+    -- Poll only returns track 0's position, so only update if recording on track 0
+    if recording_track == 0 then
       record_pointer = value
-    else
+    elseif recording_track == -1 then
       record_pointer = 0
     end
+    -- If recording on tracks 1-3, don't update (poll doesn't support those tracks)
   end)
   record_pointer_poll.time = 0.05
   record_pointer_poll:start()
@@ -183,33 +195,34 @@ end
 
 -- Calculate optimal grid dimensions for step display (as square as possible)
 function calculate_step_grid_dimensions(num_steps)
-  -- Try to make a square-ish grid, but limit to 6 rows max (rows 2-7)
+  -- Safety check: ensure num_steps is at least 1
+  if num_steps < 1 then
+    return 1, 1
+  end
+
+  -- Try to make a square-ish grid, but limit to 5 rows max (rows 3-7)
   -- to avoid overlapping with pattern recorder on row 8
   local cols = math.ceil(math.sqrt(num_steps))
   local rows = math.ceil(num_steps / cols)
 
   -- For common step counts, use nice layouts
-  -- Max 6 rows (to avoid pattern recorder), max 14 cols (columns 2-15)
+  -- Max 5 rows (rows 3-7), max 14 cols (columns 2-15)
   if num_steps == 16 then
     cols, rows = 4, 4
   elseif num_steps == 32 then
     cols, rows = 8, 4
-  elseif num_steps == 64 then
-    cols, rows = 11, 6  -- Changed from 8x8 to fit in 6 rows
   elseif num_steps == 24 then
     cols, rows = 6, 4
-  elseif num_steps == 48 then
-    cols, rows = 8, 6
   elseif num_steps <= 8 then
     cols, rows = num_steps, 1
   elseif num_steps <= 12 then
     cols, rows = 4, 3
   end
 
-  -- Ensure we don't exceed 6 rows
-  if rows > 6 then
-    cols = math.ceil(num_steps / 6)
-    rows = 6
+  -- Ensure we don't exceed 5 rows (use more width if needed)
+  if rows > 5 then
+    cols = math.ceil(num_steps / 5)
+    rows = 5
   end
 
   return cols, rows
@@ -227,6 +240,51 @@ end
 function arm_pattern_recording(n)
   record_slot = n
   record_prevtime = -1
+end
+
+-- SNAPSHOT FUNCTIONS
+function store_snapshot(slot, track)
+  track = track or current_track
+  local track_index = track + 1  -- Convert 0-3 to 1-4 for Lua indexing
+  local track_prefix = "t" .. track_index .. "_"
+
+  -- Initialize snapshot data structure for this track's slot
+  snapshot_banks[track_index][slot] = {
+    num_steps = params:get(track_prefix .. "steps"),
+    steps = {}
+  }
+
+  -- Store all step data (up to 32 steps)
+  for i = 1, 32 do
+    snapshot_banks[track_index][slot].steps[i] = {
+      active = params:get(track_prefix .. "active_" .. i),
+      reverse = params:get(track_prefix .. "reverse" .. i)
+    }
+  end
+end
+
+function recall_snapshot(slot, track)
+  track = track or current_track
+  local track_index = track + 1  -- Convert 0-3 to 1-4 for Lua indexing
+  local snapshot = snapshot_banks[track_index][slot]
+  if not snapshot or not snapshot.num_steps then return end
+
+  local track_prefix = "t" .. track_index .. "_"
+
+  -- Restore number of steps
+  params:set(track_prefix .. "steps", snapshot.num_steps)
+  engine.steps(track, snapshot.num_steps)
+
+  -- Restore all step data
+  for i = 1, 32 do
+    if snapshot.steps[i] then
+      params:set(track_prefix .. "active_" .. i, snapshot.steps[i].active)
+      params:set(track_prefix .. "reverse" .. i, snapshot.steps[i].reverse)
+    end
+  end
+
+  -- Update active snapshot indicator
+  active_snapshot[track_index] = slot
 end
 
 function stop_pattern_recording()
@@ -256,7 +314,13 @@ function pattern_next(n)
   local event = bank[pos]
   if event then
     local delta, param_id, value = table.unpack(event)
-    params:set(param_id, value)
+
+    -- Handle special snapshot recall events
+    if param_id == "snapshot_recall" then
+      recall_snapshot(value)
+    else
+      params:set(param_id, value)
+    end
 
     -- Schedule next event
     local next_pos = pos + 1
@@ -350,7 +414,7 @@ function track_params(track)
 
   params:add_taper(prefix .. "volume", "Volume", 0, 1, 1, 0)
 
-  params:add_taper(prefix .. "steps", "Steps", 4, 64, 16, 0)
+  params:add_taper(prefix .. "steps", "Steps", 4, 32, 16, 0)
   params:set_action(prefix .. "steps", function(value)
     engine.steps(track, value)
   end)
@@ -367,11 +431,13 @@ function track_params(track)
   params:add_binary(prefix .. 'record', 'Record', 'toggle', 0)
   params:set_action(prefix .. 'record', function(value)
     if value == 1 then
-      -- Start recording for this specific track
+      -- Start recording for this specific track (phasor reset happens in start_recording)
       record_clock_id = clock.run(start_recording, track)
     else
       -- Stop recording for this specific track
       engine.record(track, 0)
+      recording_track = -1  -- Clear recording track
+      record_pointer = 0  -- Reset position display
       if record_clock_id then
         clock.cancel(record_clock_id)
       end
@@ -557,7 +623,7 @@ function steps_as_params()
   params:add_separator("Steps")
   for track = 0, num_tracks - 1 do
     local track_prefix = "t" .. (track + 1) .. "_"
-    for i = 1, 64 do
+    for i = 1, 32 do
       params:add_group(track_prefix .. "step_" .. i, 7)
       params:add_separator(track_prefix .. "step: " .. i)
 
@@ -571,7 +637,7 @@ function steps_as_params()
 
       params:add_taper(track_prefix .. "pan" .. i, "pan" .. i, -1, 1, 0.0, 0)
 
-      params:add_number(track_prefix .. "segment" .. i, "segment" .. i, 1, 64, i)
+      params:add_number(track_prefix .. "segment" .. i, "segment" .. i, 1, 32, i)
     end
   end
 end
@@ -614,7 +680,7 @@ function redraw()
     screens.draw_screen_indicator(number_of_global_screens, global_screen)
 
     if global_screen == 1 then
-      screens.draw_tape_recorder(record_pointer, current_track)
+      screens.draw_tape_recorder(record_pointer, recording_track)
     elseif global_screen == 2 then
       draw_tempo_screen()
     end
@@ -1053,7 +1119,7 @@ function handle_step_circle_enc(n, delta)
   elseif n == 3 then
     if shift then
       local current_steps = params:get(get_track_param("steps"))
-      local new_steps = utils.clamp(current_steps + delta, 4, 64)
+      local new_steps = utils.clamp(current_steps + delta, 4, 32)
       local param_id = get_track_param("steps")
       params:set(param_id, new_steps)
       engine.steps(current_track, new_steps)
@@ -1330,13 +1396,55 @@ end
 
 -- GRID
 function grid_key(x, y, z)
-  -- Row 8, Column 1: Shift button (hold to clear patterns)
-  if x == 1 and y == 8 then
+  -- Row 8, Column 16: Shift button (hold to clear patterns)
+  if x == 16 and y == 8 then
     shift = (z == 1)
     return
   end
 
   if z == 1 then  -- Button press
+    -- Row 1, Columns 7-10: Snapshot slots (4 slots, centered)
+    -- Only available on track screens (modes 2-5) and step screen (screen 1)
+    if y == 1 and x >= 7 and x <= 10 then
+      -- Check if we're on a track screen and step screen
+      if screen_mode >= 2 and screen_mode <= 5 then
+        local current_screen = selected_voice_screen[current_track + 1]
+        if current_screen == 1 then
+          local slot = x - 6  -- Convert column to slot number (1-4)
+          local track_index = current_track + 1  -- Convert 0-3 to 1-4 for Lua indexing
+
+          -- Clear snapshot if shift is held
+          if shift then
+            snapshot_banks[track_index][slot] = {}
+            if active_snapshot[track_index] == slot then
+              active_snapshot[track_index] = -1
+            end
+            set_show_info_banner("SNAPSHOT " .. slot .. " CLEARED", "center")
+            return
+          end
+
+          local has_data = next(snapshot_banks[track_index][slot]) ~= nil
+
+          if has_data then
+            -- Recall snapshot if it has data (active_snapshot updated inside recall_snapshot)
+            recall_snapshot(slot)
+
+            -- Record snapshot recall in pattern if recording
+            if record_slot > 0 then
+              record_pattern_event("snapshot_recall", slot)
+            end
+
+            set_show_info_banner("SNAPSHOT " .. slot .. " RECALLED", "center")
+          else
+            -- Store snapshot if empty
+            store_snapshot(slot)
+            active_snapshot[track_index] = slot
+            set_show_info_banner("SNAPSHOT " .. slot .. " STORED", "center")
+          end
+        end
+      end
+    end
+
     -- Row 8, Columns 5-12: Pattern recording slots (8 slots)
     if y == 8 and x >= 5 and x <= 12 then
       local slot = x - 4  -- Convert column to slot number (1-8)
@@ -1420,15 +1528,15 @@ function grid_key(x, y, z)
       -- Row 6: Delay (mode 6)
       elseif y == 6 then
         screen_mode = 6
-      -- Row 8: Start/Stop all tracks
-      elseif y == 8 then
-        toggle_all_tracks()
       end
     end
 
-    -- Column 1 (leftmost): Sub-screen selection
+    -- Column 1 (leftmost): Sub-screen selection and Start/Stop all
     if x == 1 then
-      if screen_mode == 1 then
+      -- Row 8: Start/Stop all tracks
+      if y == 8 then
+        toggle_all_tracks()
+      elseif screen_mode == 1 then
         -- Tape mode: 2 sub-screens
         if y >= 1 and y <= number_of_global_screens then
           global_screen = y
@@ -1454,7 +1562,7 @@ function grid_key(x, y, z)
         -- Column 2 free on left, column 15 free on right
         local available_cols = 12
         local start_col = 3 + math.floor((available_cols - grid_cols) / 2)
-        local start_row = 2
+        local start_row = 3
 
         -- Check if press is in the step grid area
         local end_col = start_col + grid_cols - 1
@@ -1485,12 +1593,15 @@ function grid_key(x, y, z)
 
       -- Piano keyboard for screen 4 (pitch screen)
       if current_screen == 4 then
-        -- Row 5: Octave selector (4 options: -1, 0, +1, +2)
+        -- Row 6: Octave selector (4 options: -1, 0, +1, +2)
         -- Centered at columns 7-10
-        if y == 5 and x >= 7 and x <= 10 then
+        if y == 6 and x >= 7 and x <= 10 then
           local target_octave = (x - 7) - 1  -- Maps columns 7,8,9,10 to octaves -1,0,+1,+2
 
-          -- Get current semitone and calculate note within octave
+          -- Update the keyboard's octave view
+          keyboard_octave[current_track + 1] = target_octave
+
+          -- Get current semitone and calculate note within octave (capped at 0-11)
           local current_semitone = params:get(get_track_param("semitones"))
           local note_in_octave = current_semitone % 12
           if note_in_octave < 0 then note_in_octave = note_in_octave + 12 end
@@ -1511,36 +1622,28 @@ function grid_key(x, y, z)
           return
         end
 
-        -- Rows 2-3: Piano keyboard (C to C, columns 5-12)
-        if (y == 2 or y == 3) and x >= 5 and x <= 12 then
-          local col_offset = x - 5  -- 0-7 for white keys
+        -- Rows 3-4: Piano keyboard (C to C, columns 5-12)
+        if (y == 3 or y == 4) and x >= 5 and x <= 12 then
+          local col_offset = x - 5  -- 0-7 for keys
           local note_semitone = -1
 
           if y == 3 then
-            -- Row 3: White keys (C, D, E, F, G, A, B, C) - 8 keys, C to C
-            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11, 12}
-            note_semitone = white_key_semitones[col_offset + 1]
-          elseif y == 2 then
-            -- Row 2: Black keys (C#, D#, --, F#, G#, A#, --, C#)
+            -- Row 3: Black keys (C#, D#, --, F#, G#, A#, --, C#)
             local black_key_semitones = {1, 3, -1, 6, 8, 10, -1, 13}
             note_semitone = black_key_semitones[col_offset + 1]
+          elseif y == 4 then
+            -- Row 4: White keys (C, D, E, F, G, A, B, C) - 8 keys, C to C
+            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11, 12}
+            note_semitone = white_key_semitones[col_offset + 1]
           end
 
           -- Only trigger if valid semitone (not a gap)
           if note_semitone >= 0 then
-            -- Get current octave from current semitone setting
-            local current_semitone = params:get(get_track_param("semitones"))
-            local current_octave = math.floor(current_semitone / 12)
+            -- Use the keyboard's octave view (doesn't change when keys are pressed)
+            local current_octave = keyboard_octave[current_track + 1]
 
-            -- Calculate final semitone
-            -- For notes 0-11, use current octave
-            -- For note 12 (second C) and 13 (second C#), use next octave
-            local final_semitone
-            if note_semitone >= 12 then
-              final_semitone = (current_octave * 12) + note_semitone
-            else
-              final_semitone = (current_octave * 12) + note_semitone
-            end
+            -- Calculate final semitone - all keys just add to keyboard octave base
+            local final_semitone = (current_octave * 12) + note_semitone
 
             -- Set the semitone parameter for the current track
             local semitone_param = get_track_param("semitones")
@@ -1572,8 +1675,36 @@ end
 function grid_redraw()
   g:all(0)  -- Clear all LEDs
 
-  -- Row 8, Column 1: Shift button (brighter to distinguish from sub-screens)
-  g:led(1, 8, shift and 15 or 6)
+  -- Row 8, Column 16: Shift button (brighter to distinguish from sub-screens)
+  g:led(16, 8, shift and 15 or 6)
+
+  -- Row 1, Columns 7-10: Snapshot slots (4 slots, centered)
+  -- Only show on track screens (modes 2-5) and step screen (screen 1)
+  if screen_mode >= 2 and screen_mode <= 5 then
+    local current_screen = selected_voice_screen[current_track + 1]
+    if current_screen == 1 then
+      local track_index = current_track + 1  -- Convert 0-3 to 1-4 for Lua indexing
+      for i = 1, num_snapshots do
+        local col = i + 6  -- Convert slot to column (7-10)
+        local brightness = 0
+
+        local has_data = next(snapshot_banks[track_index][i]) ~= nil
+
+        if active_snapshot[track_index] == i then
+          -- Active/recalled snapshot: bright
+          brightness = 15
+        elseif has_data then
+          -- Has data: medium
+          brightness = 6
+        else
+          -- Empty: dim
+          brightness = 2
+        end
+
+        g:led(col, 1, brightness)
+      end
+    end
+  end
 
   -- Row 8, Columns 5-12: Pattern recording slots (8 slots)
   for i = 1, num_pattern_slots do
@@ -1621,7 +1752,7 @@ function grid_redraw()
     g:led(16, 6, 6)  -- Brighter when unselected
   end
 
-  -- Row 8, Column 16: All tracks start/stop indicator
+  -- Row 8, Column 1: All tracks start/stop indicator
   local any_playing = false
   for track = 0, num_tracks - 1 do
     if params:get("t" .. (track + 1) .. "_play") == 1 then
@@ -1629,9 +1760,9 @@ function grid_redraw()
       break
     end
   end
-  g:led(16, 8, any_playing and 15 or 6)  -- Bright when playing, dim when stopped
+  g:led(1, 8, any_playing and 15 or 6)  -- Bright when playing, dim when stopped
 
-  -- Column 1: Sub-screen indicators (dimmer than shift button)
+  -- Column 1: Sub-screen indicators (dimmer than start/stop button)
   if screen_mode == 1 then
     -- Tape mode: show global screen options
     for i = 1, number_of_global_screens do
@@ -1639,6 +1770,35 @@ function grid_redraw()
         g:led(1, i, 12)  -- Bright but not as bright as shift
       else
         g:led(1, i, 3)   -- Dimmer when unselected
+      end
+    end
+
+    -- Tape recorder screen: display position indicator on row 2
+    if global_screen == 1 then
+      local num_position_leds = 8  -- 8 steps centered on grid (columns 5-12)
+      local position_start_col = 5
+
+      -- Check if currently recording on current track
+      local is_recording = params:get(get_track_param("record")) == 1
+
+      -- Only show position if recording on track 0 (poll only supports track 0)
+      if recording_track == 0 and (is_recording or record_pointer > 0) then
+        -- Calculate which LED should be lit based on position
+        local position_led = math.floor(record_pointer * num_position_leds) + 1
+        position_led = math.max(1, math.min(position_led, num_position_leds))
+
+        -- Draw position indicator
+        for i = 1, num_position_leds do
+          local brightness = 0
+          if i < position_led then
+            brightness = 4  -- Past position: dim
+          elseif i == position_led then
+            brightness = is_recording and 15 or 10  -- Current position: bright if recording
+          else
+            brightness = 2  -- Future position: very dim
+          end
+          g:led(position_start_col + i - 1, 2, brightness)
+        end
       end
     end
   elseif screen_mode >= 2 and screen_mode <= 5 then
@@ -1660,10 +1820,10 @@ function grid_redraw()
 
       -- Center the grid horizontally (columns 2-15 available = 14 columns)
       -- Avoid column 1 (sub-screen select) and column 16 (mode select)
-      -- Rows 2-7 available (6 rows, avoiding row 8 pattern recorder)
+      -- Rows 3-7 available (5 rows, avoiding row 8 pattern recorder)
       local available_cols = 14
       local start_col = 2 + math.floor((available_cols - grid_cols) / 2)
-      local start_row = 2
+      local start_row = 3
       local track_prefix = "t" .. (current_track + 1) .. "_"
 
       for step = 1, track_steps do
@@ -1709,30 +1869,12 @@ function grid_redraw()
     if current_screen == 4 then
       -- Get current track's semitone setting to highlight it
       local current_semitone = params:get(get_track_param("semitones"))
-      local semitone_in_octave = current_semitone % 12
-      if semitone_in_octave < 0 then semitone_in_octave = semitone_in_octave + 12 end
-      local current_octave = math.floor(current_semitone / 12)
+
+      -- Use the keyboard's octave view (doesn't change when keys are pressed)
+      local current_octave = keyboard_octave[current_track + 1]
 
       -- Piano keyboard layout - C to C (columns 5-12)
-      -- Row 2: Black keys, Row 3: White keys
-
-      -- White keys semitones mapping (row 3, columns 5-12) - C to C (octave up)
-      local white_keys = {0, 2, 4, 5, 7, 9, 11, 12}
-
-      -- Draw white keys (row 3) - 8 columns
-      for i, semitone in ipairs(white_keys) do
-        local col = i + 4  -- columns 5-12
-        -- Highlight if current semitone matches (mod 12 for first 7 keys, exact match for 8th)
-        local is_current
-        if semitone < 12 then
-          is_current = (semitone_in_octave == semitone)
-        else
-          -- Second C (semitone 12) only highlights if current semitone is exactly 12 in this octave
-          is_current = (current_semitone == (current_octave * 12) + 12)
-        end
-        local brightness = is_current and 15 or 6
-        g:led(col, 3, brightness)
-      end
+      -- Row 3: Black keys, Row 4: White keys
 
       -- Black keys positions (some columns are gaps where piano has no black keys)
       local black_keys = {
@@ -1746,26 +1888,37 @@ function grid_redraw()
         {col = 12, semitone = 13}, -- C# (octave up)
       }
 
-      -- Draw black keys (row 2)
+      -- Draw black keys (row 3)
       for _, key in ipairs(black_keys) do
-        local is_current
-        if key.semitone < 12 then
-          is_current = (semitone_in_octave == key.semitone)
-        else
-          -- Second C# (semitone 13) only highlights if current semitone is exactly 13 in this octave
-          is_current = (current_semitone == (current_octave * 12) + 13)
-        end
+        -- Calculate what semitone value this key would set
+        local key_sets_semitone = (current_octave * 12) + key.semitone
+
+        local is_current = (current_semitone == key_sets_semitone)
         local brightness = is_current and 15 or 4
-        g:led(key.col, 2, brightness)
+        g:led(key.col, 3, brightness)
       end
 
-      -- Octave selector (row 5, centered at columns 7-10)
+      -- White keys semitones mapping (row 4, columns 5-12) - C to C (octave up)
+      local white_keys = {0, 2, 4, 5, 7, 9, 11, 12}
+
+      -- Draw white keys (row 4) - 8 columns
+      for i, semitone in ipairs(white_keys) do
+        local col = i + 4  -- columns 5-12
+        -- Calculate what semitone value this key would set
+        local key_sets_semitone = (current_octave * 12) + semitone
+
+        local is_current = (current_semitone == key_sets_semitone)
+        local brightness = is_current and 15 or 6
+        g:led(col, 4, brightness)
+      end
+
+      -- Octave selector (row 6, centered at columns 7-10)
       -- Maps to octaves: -1, 0, +1, +2
       for i = 0, 3 do
         local col = 7 + i  -- Centered at columns 7-10
         local octave = i - 1
         local brightness = (current_octave == octave) and 15 or 6
-        g:led(col, 5, brightness)
+        g:led(col, 6, brightness)
       end
     end
   end
@@ -1935,6 +2088,101 @@ function delete_buffers(pset_number)
   print("Buffer delete complete")
 end
 
+-- PATTERN AND SNAPSHOT SAVE/LOAD FOR PSET SUPPORT
+function save_patterns_and_snapshots(pset_number)
+  local dir = _path.audio .. "rounds/"
+  os.execute("mkdir -p \"" .. dir .. "\"")
+
+  local data = {
+    patterns = {},
+    snapshots = {}
+  }
+
+  -- Save pattern banks
+  for i = 1, num_pattern_slots do
+    data.patterns[i] = pattern_banks[i]
+  end
+
+  -- Save snapshot banks (per-track)
+  for track = 1, num_tracks do
+    data.snapshots[track] = {}
+    for slot = 1, num_snapshots do
+      data.snapshots[track][slot] = snapshot_banks[track][slot]
+    end
+  end
+
+  -- Write to JSON file
+  local filepath = dir .. "pset_" .. pset_number .. "_data.json"
+  local file = io.open(filepath, "w")
+  if file then
+    file:write(tab.save(data))
+    file:close()
+    print("=== PATTERNS AND SNAPSHOTS SAVED: " .. filepath .. " ===")
+  else
+    print("ERROR: Could not write patterns/snapshots file")
+  end
+end
+
+function load_patterns_and_snapshots(pset_number)
+  local dir = _path.audio .. "rounds/"
+  local filepath = dir .. "pset_" .. pset_number .. "_data.json"
+
+  local file = io.open(filepath, "r")
+  if file then
+    local content = file:read("*all")
+    file:close()
+
+    local data = tab.load(content)
+    if data then
+      -- Stop all pattern playback and recording
+      for i = 1, num_pattern_slots do
+        if pattern_timers[i].is_running then
+          stop_pattern_playback(i)
+        end
+      end
+      record_slot = -1
+      record_prevtime = -1
+
+      -- Load pattern banks
+      if data.patterns then
+        for i = 1, num_pattern_slots do
+          pattern_banks[i] = data.patterns[i] or {}
+        end
+      end
+
+      -- Load snapshot banks (per-track)
+      if data.snapshots then
+        for track = 1, num_tracks do
+          snapshot_banks[track] = snapshot_banks[track] or {}
+          if data.snapshots[track] then
+            for slot = 1, num_snapshots do
+              snapshot_banks[track][slot] = data.snapshots[track][slot] or {}
+            end
+          end
+        end
+      end
+
+      -- Reset active snapshots for all tracks
+      for track = 1, num_tracks do
+        active_snapshot[track] = -1
+      end
+
+      print("=== PATTERNS AND SNAPSHOTS LOADED: " .. filepath .. " ===")
+    else
+      print("ERROR: Could not parse patterns/snapshots file")
+    end
+  else
+    print("No patterns/snapshots file found for PSET " .. pset_number)
+  end
+end
+
+function delete_patterns_and_snapshots(pset_number)
+  local dir = _path.audio .. "rounds/"
+  local filepath = dir .. "pset_" .. pset_number .. "_data.json"
+  os.execute("rm -f \"" .. filepath .. "\"")
+  print("Patterns and snapshots deleted for PSET " .. pset_number)
+end
+
 -- CLOCK
 function clock.transport.start()
   params:set("play_stop", 1)
@@ -1955,7 +2203,9 @@ function start_recording(track)
   local step_division = params:get(get_track_param("step_division", track))
   local division_factor = utils.division_factors[step_division]
   clock.sync(division_factor * 4)
+  recording_track = track  -- Track which track is recording
   engine.resetRecorder(track)
+  clock.sleep(0.03)  -- Wait for phasor reset to take effect (longer than SC's 0.01s bundle delay)
   engine.record(track, 1)
 end
 
@@ -2003,6 +2253,11 @@ function start_sequence()
 
         -- Only advance sequence and trigger sounds when playing
         if is_playing then
+          -- Safety check: ensure we have at least 1 step
+          if track_num_steps < 1 then
+            track_num_steps = 1
+          end
+
           local index = 0
 
           if direction == 1 then
