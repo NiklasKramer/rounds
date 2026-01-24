@@ -1391,7 +1391,14 @@ function grid_key(x, y, z)
           local track_index = y - 2  -- Maps rows 2-5 to tracks 0-3
           local track_param = "t" .. (track_index + 1) .. "_play"
           local is_playing = params:get(track_param)
-          params:set(track_param, 1 - is_playing)
+          local new_value = 1 - is_playing
+          params:set(track_param, new_value)
+
+          -- Record pattern event
+          if record_slot > 0 then
+            record_pattern_event(track_param, new_value)
+          end
+
           set_show_info_banner("TRACK " .. (track_index + 1) .. (is_playing == 1 and " STOP" or " START"), "center")
         else
           -- Normal press: Switch to track mode
@@ -1484,7 +1491,13 @@ function grid_key(x, y, z)
           local new_semitone = (target_octave * 12) + note_in_octave
 
           -- Set the semitone parameter
-          params:set(get_track_param("semitones"), new_semitone)
+          local semitone_param = get_track_param("semitones")
+          params:set(semitone_param, new_semitone)
+
+          -- Record pattern event
+          if record_slot > 0 then
+            record_pattern_event(semitone_param, new_semitone)
+          end
 
           set_show_info_banner(new_semitone .. " ST", "center")
           return
@@ -1511,12 +1524,24 @@ function grid_key(x, y, z)
             local current_semitone = params:get(get_track_param("semitones"))
             local current_octave = math.floor(current_semitone / 12)
 
-            -- Handle octave wraparound for the second C (12) and C# (13)
-            local note_in_octave = note_semitone % 12
-            local final_semitone = (current_octave * 12) + note_in_octave
+            -- Calculate final semitone
+            -- For notes 0-11, use current octave
+            -- For note 12 (second C) and 13 (second C#), use next octave
+            local final_semitone
+            if note_semitone >= 12 then
+              final_semitone = (current_octave * 12) + note_semitone
+            else
+              final_semitone = (current_octave * 12) + note_semitone
+            end
 
             -- Set the semitone parameter for the current track
-            params:set(get_track_param("semitones"), final_semitone)
+            local semitone_param = get_track_param("semitones")
+            params:set(semitone_param, final_semitone)
+
+            -- Record pattern event
+            if record_slot > 0 then
+              record_pattern_event(semitone_param, final_semitone)
+            end
 
             -- Trigger a preview sound with calculated pitch
             local rate = 2 ^ (final_semitone / 12)
@@ -1587,6 +1612,16 @@ function grid_redraw()
   else
     g:led(16, 6, 6)  -- Brighter when unselected
   end
+
+  -- Row 8, Column 16: All tracks start/stop indicator
+  local any_playing = false
+  for track = 0, num_tracks - 1 do
+    if params:get("t" .. (track + 1) .. "_play") == 1 then
+      any_playing = true
+      break
+    end
+  end
+  g:led(16, 8, any_playing and 15 or 6)  -- Bright when playing, dim when stopped
 
   -- Column 1: Sub-screen indicators (dimmer than shift button)
   if screen_mode == 1 then
@@ -1673,14 +1708,21 @@ function grid_redraw()
       -- Piano keyboard layout - C to C (columns 5-12)
       -- Row 2: Black keys, Row 3: White keys
 
-      -- White keys semitones mapping (row 3, columns 5-12) - C to C
+      -- White keys semitones mapping (row 3, columns 5-12) - C to C (octave up)
       local white_keys = {0, 2, 4, 5, 7, 9, 11, 12}
 
       -- Draw white keys (row 3) - 8 columns
       for i, semitone in ipairs(white_keys) do
         local col = i + 4  -- columns 5-12
-        local is_current = (semitone_in_octave == semitone or (semitone == 12 and semitone_in_octave == 0))
-        local brightness = is_current and 15 or 6  -- Highlight current or dim for white keys
+        -- Highlight if current semitone matches (mod 12 for first 7 keys, exact match for 8th)
+        local is_current
+        if semitone < 12 then
+          is_current = (semitone_in_octave == semitone)
+        else
+          -- Second C (semitone 12) only highlights if current semitone is exactly 12 in this octave
+          is_current = (current_semitone == (current_octave * 12) + 12)
+        end
+        local brightness = is_current and 15 or 6
         g:led(col, 3, brightness)
       end
 
@@ -1698,8 +1740,14 @@ function grid_redraw()
 
       -- Draw black keys (row 2)
       for _, key in ipairs(black_keys) do
-        local is_current = (semitone_in_octave == key.semitone % 12 or (key.semitone == 13 and semitone_in_octave == 1))
-        local brightness = is_current and 15 or 4  -- Highlight current or dim for black keys
+        local is_current
+        if key.semitone < 12 then
+          is_current = (semitone_in_octave == key.semitone)
+        else
+          -- Second C# (semitone 13) only highlights if current semitone is exactly 13 in this octave
+          is_current = (current_semitone == (current_octave * 12) + 13)
+        end
+        local brightness = is_current and 15 or 4
         g:led(key.col, 2, brightness)
       end
 
