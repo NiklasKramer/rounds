@@ -680,7 +680,7 @@ function redraw()
     screens.draw_screen_indicator(number_of_global_screens, global_screen)
 
     if global_screen == 1 then
-      screens.draw_tape_recorder(record_pointer, recording_track)
+      screens.draw_tape_recorder(record_pointer, current_track)
     elseif global_screen == 2 then
       draw_tempo_screen()
     end
