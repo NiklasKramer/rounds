@@ -1477,18 +1477,18 @@ function grid_key(x, y, z)
           return
         end
 
-        -- Rows 2-3: Piano keyboard (1 octave, centered at columns 5-11)
-        if (y == 2 or y == 3) and x >= 5 and x <= 11 then
-          local col_offset = x - 5  -- 0-6 for white keys
+        -- Rows 2-3: Piano keyboard (C to C, columns 5-12)
+        if (y == 2 or y == 3) and x >= 5 and x <= 12 then
+          local col_offset = x - 5  -- 0-7 for white keys
           local note_semitone = -1
 
           if y == 3 then
-            -- Row 3: White keys (C, D, E, F, G, A, B) - 7 keys, one octave
-            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11}
+            -- Row 3: White keys (C, D, E, F, G, A, B, C) - 8 keys, C to C
+            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11, 12}
             note_semitone = white_key_semitones[col_offset + 1]
           elseif y == 2 then
-            -- Row 2: Black keys (C#, D#, --, F#, G#, A#, --)
-            local black_key_semitones = {1, 3, -1, 6, 8, 10, -1}
+            -- Row 2: Black keys (C#, D#, --, F#, G#, A#, --, C#)
+            local black_key_semitones = {1, 3, -1, 6, 8, 10, -1, 13}
             note_semitone = black_key_semitones[col_offset + 1]
           end
 
@@ -1498,8 +1498,9 @@ function grid_key(x, y, z)
             local current_semitone = params:get(get_track_param("semitones"))
             local current_octave = math.floor(current_semitone / 12)
 
-            -- Calculate final semitone: keep current octave, change note
-            local final_semitone = (current_octave * 12) + note_semitone
+            -- Handle octave wraparound for the second C (12) and C# (13)
+            local note_in_octave = note_semitone % 12
+            local final_semitone = (current_octave * 12) + note_in_octave
 
             -- Set the semitone parameter for the current track
             params:set(get_track_param("semitones"), final_semitone)
@@ -1656,16 +1657,16 @@ function grid_redraw()
       if semitone_in_octave < 0 then semitone_in_octave = semitone_in_octave + 12 end
       local current_octave = math.floor(current_semitone / 12)
 
-      -- Piano keyboard layout - 1 octave (columns 5-11)
+      -- Piano keyboard layout - C to C (columns 5-12)
       -- Row 2: Black keys, Row 3: White keys
 
-      -- White keys semitones mapping (row 3, columns 5-11) - C to B
-      local white_keys = {0, 2, 4, 5, 7, 9, 11}
+      -- White keys semitones mapping (row 3, columns 5-12) - C to C
+      local white_keys = {0, 2, 4, 5, 7, 9, 11, 12}
 
-      -- Draw white keys (row 3) - 7 columns
+      -- Draw white keys (row 3) - 8 columns
       for i, semitone in ipairs(white_keys) do
-        local col = i + 4  -- columns 5-11
-        local is_current = (semitone_in_octave == semitone)
+        local col = i + 4  -- columns 5-12
+        local is_current = (semitone_in_octave == semitone or (semitone == 12 and semitone_in_octave == 0))
         local brightness = is_current and 15 or 6  -- Highlight current or dim for white keys
         g:led(col, 3, brightness)
       end
@@ -1679,11 +1680,12 @@ function grid_redraw()
         {col = 9, semitone = 8},   -- G#
         {col = 10, semitone = 10}, -- A#
         -- col 11 is gap (no black key between B and C)
+        {col = 12, semitone = 13}, -- C# (octave up)
       }
 
       -- Draw black keys (row 2)
       for _, key in ipairs(black_keys) do
-        local is_current = (semitone_in_octave == key.semitone)
+        local is_current = (semitone_in_octave == key.semitone % 12 or (key.semitone == 13 and semitone_in_octave == 1))
         local brightness = is_current and 15 or 4  -- Highlight current or dim for black keys
         g:led(key.col, 2, brightness)
       end
