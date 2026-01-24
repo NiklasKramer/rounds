@@ -277,7 +277,7 @@ Engine_Rounds : CroneEngine {
             \w_depth, 0.00027,
             \rotate, 0.0,
             \mix, 0.2,
-            \lagTime, 0.02,
+            \lagTime, 0.5,
         ], target: context.xg);
 
         context.server.sync;
