@@ -2206,6 +2206,11 @@ function start_recording(track)
   recording_track = track  -- Track which track is recording
   engine.resetRecorder(track)
   clock.sleep(0.03)  -- Wait for phasor reset to take effect (longer than SC's 0.01s bundle delay)
+  -- TODO: Position still jumps to 0 and back. The phasor keeps running even after reset.
+  -- Issue: SC's Phasor is free-running. The reset trigger doesn't stop it from continuing.
+  -- The poll reads the old phasor value, then the reset takes effect, then poll reads again.
+  -- Potential fixes: 1) Stop poll during reset, 2) Modify SC to have a proper reset,
+  --                  3) Add per-track phasor support in SC poll
   engine.record(track, 1)
 end
 
