@@ -1374,7 +1374,7 @@ function grid_key(x, y, z)
       end
     end
 
-    -- Column 16 (rightmost): Main mode selection
+    -- Column 16 (rightmost): Main mode selection and track control
     if x == 16 then
       -- Row 1: Tape (mode 1)
       if y == 1 then
@@ -1386,15 +1386,28 @@ function grid_key(x, y, z)
         end
       -- Rows 2-5: Tracks 1-4 (modes 2-5)
       elseif y >= 2 and y <= 5 then
-        if screen_mode == y then
-          -- Cycle through track sub-screens
-          selected_voice_screen[current_track + 1] = (selected_voice_screen[current_track + 1] % number_of_screens) + 1
+        if shift then
+          -- Shift + Track button: Toggle play/stop for that track
+          local track_index = y - 2  -- Maps rows 2-5 to tracks 0-3
+          local track_param = "t" .. (track_index + 1) .. "_play"
+          local is_playing = params:get(track_param)
+          params:set(track_param, 1 - is_playing)
+          set_show_info_banner("TRACK " .. (track_index + 1) .. (is_playing == 1 and " STOP" or " START"), "center")
         else
-          screen_mode = y
+          -- Normal press: Switch to track mode
+          if screen_mode == y then
+            -- Cycle through track sub-screens
+            selected_voice_screen[current_track + 1] = (selected_voice_screen[current_track + 1] % number_of_screens) + 1
+          else
+            screen_mode = y
+          end
         end
       -- Row 6: Delay (mode 6)
       elseif y == 6 then
         screen_mode = 6
+      -- Row 8: Start/Stop all tracks
+      elseif y == 8 then
+        toggle_all_tracks()
       end
     end
 
