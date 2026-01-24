@@ -61,9 +61,6 @@ for i = 1, num_pattern_slots do
   table.insert(pattern_positions, 1)
 end
 
--- Grid Piano Keyboard (for pitch screen)
-local pitch_octave_offset = 0  -- Selected octave: -1, 0, +1, +2 (shifts keyboard by ±12 semitones)
-
 -- Timing and Clock
 local record_clock_id = 0
 
@@ -1463,29 +1460,46 @@ function grid_key(x, y, z)
         -- Row 5: Octave selector (4 options: -1, 0, +1, +2)
         -- Centered at columns 7-10
         if y == 5 and x >= 7 and x <= 10 then
-          pitch_octave_offset = (x - 7) - 1  -- Maps columns 7,8,9,10 to octaves -1,0,+1,+2
+          local target_octave = (x - 7) - 1  -- Maps columns 7,8,9,10 to octaves -1,0,+1,+2
+
+          -- Get current semitone and calculate note within octave
+          local current_semitone = params:get(get_track_param("semitones"))
+          local note_in_octave = current_semitone % 12
+          if note_in_octave < 0 then note_in_octave = note_in_octave + 12 end
+
+          -- Calculate new semitone in target octave
+          local new_semitone = (target_octave * 12) + note_in_octave
+
+          -- Set the semitone parameter
+          params:set(get_track_param("semitones"), new_semitone)
+
+          set_show_info_banner(new_semitone .. " ST", "center")
           return
         end
 
-        -- Rows 2-3: Piano keyboard (columns 3-14)
-        if (y == 2 or y == 3) and x >= 3 and x <= 14 then
-          local col_offset = x - 3  -- 0-11
-          local semitone = -1
+        -- Rows 2-3: Piano keyboard (1 octave, centered at columns 5-11)
+        if (y == 2 or y == 3) and x >= 5 and x <= 11 then
+          local col_offset = x - 5  -- 0-6 for white keys
+          local note_semitone = -1
 
           if y == 3 then
-            -- Row 3: White keys (C, D, E, F, G, A, B, C, D, E, F, G)
-            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19}
-            semitone = white_key_semitones[col_offset + 1]
+            -- Row 3: White keys (C, D, E, F, G, A, B) - 7 keys, one octave
+            local white_key_semitones = {0, 2, 4, 5, 7, 9, 11}
+            note_semitone = white_key_semitones[col_offset + 1]
           elseif y == 2 then
-            -- Row 2: Black keys (C#, D#, --, F#, G#, A#, C#, D#, --, F#, G#, --)
-            local black_key_semitones = {1, 3, -1, 6, 8, 10, 13, 15, -1, 18, 20, -1}
-            semitone = black_key_semitones[col_offset + 1]
+            -- Row 2: Black keys (C#, D#, --, F#, G#, A#, --)
+            local black_key_semitones = {1, 3, -1, 6, 8, 10, -1}
+            note_semitone = black_key_semitones[col_offset + 1]
           end
 
           -- Only trigger if valid semitone (not a gap)
-          if semitone >= 0 then
-            -- Calculate final semitone with octave offset
-            local final_semitone = semitone + (pitch_octave_offset * 12)
+          if note_semitone >= 0 then
+            -- Get current octave from current semitone setting
+            local current_semitone = params:get(get_track_param("semitones"))
+            local current_octave = math.floor(current_semitone / 12)
+
+            -- Calculate final semitone: keep current octave, change note
+            local final_semitone = (current_octave * 12) + note_semitone
 
             -- Set the semitone parameter for the current track
             params:set(get_track_param("semitones"), final_semitone)
@@ -1638,40 +1652,38 @@ function grid_redraw()
     if current_screen == 4 then
       -- Get current track's semitone setting to highlight it
       local current_semitone = params:get(get_track_param("semitones"))
+      local semitone_in_octave = current_semitone % 12
+      if semitone_in_octave < 0 then semitone_in_octave = semitone_in_octave + 12 end
+      local current_octave = math.floor(current_semitone / 12)
 
-      -- Piano keyboard layout (columns 3-14)
+      -- Piano keyboard layout - 1 octave (columns 5-11)
       -- Row 2: Black keys, Row 3: White keys
 
-      -- White keys semitones mapping (row 3, columns 3-14)
-      local white_keys = {0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19}
+      -- White keys semitones mapping (row 3, columns 5-11) - C to B
+      local white_keys = {0, 2, 4, 5, 7, 9, 11}
 
-      -- Draw white keys (row 3) - all 12 columns
+      -- Draw white keys (row 3) - 7 columns
       for i, semitone in ipairs(white_keys) do
-        local col = i + 2  -- columns 3-14
-        local is_current = (current_semitone == semitone)
-        local brightness = is_current and 15 or 12  -- Highlight current or bright for white keys
+        local col = i + 4  -- columns 5-11
+        local is_current = (semitone_in_octave == semitone)
+        local brightness = is_current and 15 or 6  -- Highlight current or dim for white keys
         g:led(col, 3, brightness)
       end
 
       -- Black keys positions (some columns are gaps where piano has no black keys)
       local black_keys = {
-        {col = 3, semitone = 1},   -- C#
-        {col = 4, semitone = 3},   -- D#
-        -- col 5 is gap (no black key between E and F)
-        {col = 6, semitone = 6},   -- F#
-        {col = 7, semitone = 8},   -- G#
-        {col = 8, semitone = 10},  -- A#
-        {col = 9, semitone = 13},  -- C#
-        {col = 10, semitone = 15}, -- D#
-        -- col 11 is gap
-        {col = 12, semitone = 18}, -- F#
-        {col = 13, semitone = 20}, -- G#
-        -- col 14 is gap
+        {col = 5, semitone = 1},   -- C#
+        {col = 6, semitone = 3},   -- D#
+        -- col 7 is gap (no black key between E and F)
+        {col = 8, semitone = 6},   -- F#
+        {col = 9, semitone = 8},   -- G#
+        {col = 10, semitone = 10}, -- A#
+        -- col 11 is gap (no black key between B and C)
       }
 
       -- Draw black keys (row 2)
       for _, key in ipairs(black_keys) do
-        local is_current = (current_semitone == key.semitone)
+        local is_current = (semitone_in_octave == key.semitone)
         local brightness = is_current and 15 or 4  -- Highlight current or dim for black keys
         g:led(key.col, 2, brightness)
       end
@@ -1681,7 +1693,7 @@ function grid_redraw()
       for i = 0, 3 do
         local col = 7 + i  -- Centered at columns 7-10
         local octave = i - 1
-        local brightness = (pitch_octave_offset == octave) and 15 or 6
+        local brightness = (current_octave == octave) and 15 or 6
         g:led(col, 5, brightness)
       end
     end
