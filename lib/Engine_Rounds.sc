@@ -1,5 +1,6 @@
 Engine_Rounds : CroneEngine {
     var pg, delayBus, warpDelay, fade = 0.1, trigBus;
+    var mulawMixVisBuses, mulawBitsVisBuses, mulawPollTrack = 0;
     
     // Arrays for 4 tracks
     var <buffers, <buffersR, <recordBuffers, <recordBuffersR;
@@ -11,6 +12,10 @@ Engine_Rounds : CroneEngine {
     var <attacks, <releases, <useEnvs, <lowpassEnvStrengths, <hipassEnvStrengths;
     var <randomOctaves, <randomPans, <randomAmps, <randomLowPasses, <randomHiPasses;
     var <randomFiths, <randomReverses, <randomAttacks, <randomReleases;
+
+    // Per-track MuLaw FX parameters
+    var <mulawMus, <mulawBits, <mulawDithers, <mulawMixes;
+    var <randomMulawMixes, <randomMulawBits;
     
     var numTracks = 4;
 
@@ -92,6 +97,14 @@ Engine_Rounds : CroneEngine {
         randomReverses = Array.fill(numTracks, { 0 });
         randomAttacks = Array.fill(numTracks, { 0 });
         randomReleases = Array.fill(numTracks, { 0 });
+
+        // Initialize MuLaw parameters (defaults match mulaw-test)
+        mulawMus = Array.fill(numTracks, { 255 });
+        mulawBits = Array.fill(numTracks, { 8 });
+        mulawDithers = Array.fill(numTracks, { 0.0 });
+        mulawMixes = Array.fill(numTracks, { 0.0 }); // default off (dry)
+        randomMulawMixes = Array.fill(numTracks, { 0.0 });
+        randomMulawBits = Array.fill(numTracks, { 0.0 });
         
         // Allocate buffers for each track
         numTracks.do { |i|
@@ -105,10 +118,13 @@ Engine_Rounds : CroneEngine {
         // Simple buffer synth (unchanged - works for any track)
         SynthDef(\simpleBufferSynth, {
             |bufnumL, bufnumR, startSegment = 0, endSegment = 1, numSegments = 8, amp = 0.5, rate = 1, reverse = 0, pan = 0, lowpassFreq = 20000, resonance = 1, hipassFreq = 1,
+            mulawMu = 255, mulawBits = 8, mulawDither = 0.0, mulawMix = 0.0, mulawMixLag = 0.02,
+            mulawMixOut = 0, mulawBitsOut = 0,
             out, trig = 0, fade = 0.005, vol = 1, attack = 0.01, release = 0.5, lowpassEnvStrength = 0, hipassEnvStrength = 0,
             ampLag = 0.1, rateLag = 0.0, panLag = 0.1, trigIn, useEnv = 1, sampleOrRecord = 0, loopLength = 1|
 
             var segmentSize, bufplay, bufplayL, bufplayR, phase, gate, phasorStart, phasorEnd, phasorEndRev, start, end, envGen, percEnvGen, fadeEnvGen, lpEnvGen, hpEnvGen, loopLengthInFrames, bufferOrLoopLengthFrames;
+            var mulawProcessed, mulawMixSmoothed;
 
             // Determine segment size based on mode
             segmentSize = Select.kr(sampleOrRecord, [
@@ -183,11 +199,20 @@ Engine_Rounds : CroneEngine {
             // Balance channels
             bufplay = Balance2.ar(bufplayL, bufplayR, pan);
 
+            // MuLaw processing (per-voice, per-step)
+            mulawMixSmoothed = Lag.kr(mulawMix, mulawMixLag);
+            mulawProcessed = MuLaw.ar(bufplay, mulawMu, mulawBits, mulawDither);
+            bufplay = (bufplay * (1 - mulawMixSmoothed)) + (mulawProcessed * mulawMixSmoothed);
+
             fadeEnvGen = EnvGen.ar(Env.new([0, 1, 1, 0], [fade, segmentSize - (2 * fade), fade]), gate: gate, doneAction: Done.freeSelf);
             envGen = Select.ar(useEnv, [fadeEnvGen, percEnvGen]);
 
             // Output
             Out.ar(out, bufplay * amp * vol * envGen);
+
+            // UI visualization: write last-triggered values to control busses
+            Out.kr(mulawMixOut, mulawMix);
+            Out.kr(mulawBitsOut, mulawBits);
         }).add;
 
         SynthDef(\warpDelay, { |out=0, in=32, delay=0.2, time=10, hpf=330, lpf=8200, w_rate=0.667, w_depth=0.00027, rotate=0.0, mix=0.2, i_max_del=8, lagTime=0.1|
@@ -253,6 +278,8 @@ Engine_Rounds : CroneEngine {
 
         trigBus = Bus.control(context.server, 1);
         delayBus = Bus.audio(context.server, 2);
+        mulawMixVisBuses = Array.fill(numTracks, { Bus.control(context.server, 1) });
+        mulawBitsVisBuses = Array.fill(numTracks, { Bus.control(context.server, 1) });
 
         // Create recorder for each track
         numTracks.do { |i|
@@ -401,6 +428,51 @@ Engine_Rounds : CroneEngine {
             hipassEnvStrengths[trackIndex] = msg[2];
         });
 
+        // ============================================================
+        // Per-track MuLaw FX commands
+        // ============================================================
+        this.addCommand(\mulawMu, "if", { |msg|
+            var trackIndex = msg[1];
+            mulawMus[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\mulawBits, "if", { |msg|
+            var trackIndex = msg[1];
+            mulawBits[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\mulawDither, "if", { |msg|
+            var trackIndex = msg[1];
+            mulawDithers[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\mulawMix, "if", { |msg|
+            var trackIndex = msg[1];
+            mulawMixes[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\randomMulawMix, "if", { |msg|
+            var trackIndex = msg[1];
+            randomMulawMixes[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\randomMulawBits, "if", { |msg|
+            var trackIndex = msg[1];
+            randomMulawBits[trackIndex] = msg[2];
+        });
+
+        this.addCommand(\mulawPollTrack, "i", { |msg|
+            mulawPollTrack = msg[1].clip(0, numTracks - 1);
+        });
+
+        this.addPoll(\mulawMix, {
+            mulawMixVisBuses[mulawPollTrack].getSynchronous;
+        });
+
+        this.addPoll(\mulawBits, {
+            mulawBitsVisBuses[mulawPollTrack].getSynchronous;
+        });
+
         this.addCommand(\play, "iifffi", { |msg|
             var trackIndex = msg[1];
             var startSegment = msg[2] - 1;
@@ -415,6 +487,8 @@ Engine_Rounds : CroneEngine {
             var stepRate = msg[4] * (2 ** (semitonesList[trackIndex] / 12));
             var lowpassFreqFactor = lowpassFreqs[trackIndex] + (rrand(-1, 1) * randomLowPasses[trackIndex] * 10000);
             var hipassFreqFactor = hipassFreqs[trackIndex] + (rrand(-1, 1) * randomHiPasses[trackIndex] * 10000);
+            var mulawMixFactor = mulawMixes[trackIndex] + (rrand(-1, 1) * randomMulawMixes[trackIndex]);
+            var mulawBitsFactor = mulawBits[trackIndex] + (rrand(-1, 1) * randomMulawBits[trackIndex] * 8);
 
             var selectedBufferL = if(sampleOrRecords[trackIndex] == 0, { buffers[trackIndex] }, { recordBuffers[trackIndex] });
             var selectedBufferR = if(sampleOrRecords[trackIndex] == 0, { buffersR[trackIndex] }, { recordBuffersR[trackIndex] });
@@ -428,7 +502,7 @@ Engine_Rounds : CroneEngine {
                 \amp, amp.clip(0, 3),
                 \rate, rate,
                 \pan, pan,
-                \out, delayBus,
+                \out, delayBus.index,
                 \trigIn, trigBus.index,
                 \useEnv, useEnvs[trackIndex],
                 \attack, attackR,
@@ -439,6 +513,12 @@ Engine_Rounds : CroneEngine {
                 \lowpassEnvStrength, lowpassEnvStrengths[trackIndex],
                 \hipassEnvStrength, hipassEnvStrengths[trackIndex],
                 \resonance, resonances[trackIndex],
+                \mulawMu, mulawMus[trackIndex],
+                \mulawBits, mulawBitsFactor.clip(4, 12),
+                \mulawDither, mulawDithers[trackIndex],
+                \mulawMix, mulawMixFactor.clip(0, 1),
+                \mulawMixOut, mulawMixVisBuses[trackIndex].index,
+                \mulawBitsOut, mulawBitsVisBuses[trackIndex].index,
                 \loopLength, loopLengths[trackIndex],
                 \sampleOrRecord, sampleOrRecords[trackIndex],
                 \vol, 1,
@@ -602,6 +682,8 @@ Engine_Rounds : CroneEngine {
         };
         
         delayBus.free;
+        mulawMixVisBuses.do(_.free);
+        mulawBitsVisBuses.do(_.free);
         trigBus.free;
         pg.free;
         warpDelay.free;

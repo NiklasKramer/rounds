@@ -28,7 +28,7 @@ local tape_selected_track = 0
 local num_tracks = 4
 local selected_voice_screen = { 1, 1, 1, 1 }
 local keyboard_octave = { 0, 0, 0, 0 }  -- Track which octave the keyboard is viewing (per track)
-local number_of_screens = 5
+local number_of_screens = 6
 local screen_modes = 6
 local screen_mode = 2
 local prev_screen_mode = 2
@@ -37,6 +37,8 @@ local number_of_global_screens = 2
 local arc_key_hold_time = 0
 local long_press_threshold = 0.5
 local shift = false
+local grid_quantize_enabled = false
+local grid_action_queue = {}  -- Queue for pending grid actions
 local delay_division_delta_accum = 0  -- Accumulator for delay division encoder
 local fileselect_active = false
 local selected_file_path = 'none'
@@ -44,6 +46,39 @@ local selected_file_path = 'none'
 local show_info_banner = false
 local metro_info_banner
 local info_banner_text = ""
+
+-- MuLaw visualization (polled from engine for current track)
+local mulaw_vis_mix = 0.0
+local mulaw_vis_bits = 8.0
+local mulaw_vis_available = false
+
+-- Precomputed base image for MuLaw posterization preview (keep cheap to draw)
+local mulaw_img_cols = 12
+local mulaw_img_rows = 8
+local mulaw_img_base = {}
+local mulaw_img_checker = {}
+do
+  for y = 1, mulaw_img_rows do
+    mulaw_img_base[y] = {}
+    mulaw_img_checker[y] = {}
+    for x = 1, mulaw_img_cols do
+      local nx = (x - 1) / (mulaw_img_cols - 1) * 2 - 1
+      local ny = (y - 1) / (mulaw_img_rows - 1) * 2 - 1
+      mulaw_img_base[y][x] = (math.sin(nx * 2.3) + math.cos(ny * 3.1) + 2) / 4 -- 0..1
+      mulaw_img_checker[y][x] = ((x + y) % 2 == 0) and -0.5 or 0.5
+    end
+  end
+end
+
+local function engine_supports(name)
+  return type(engine) == "table" and type(engine[name]) == "function"
+end
+
+local function safe_engine_call(name, ...)
+  if engine_supports(name) then
+    engine[name](...)
+  end
+end
 
 -- Step and Pattern Configuration
 local active_steps = { 0, 0, 0, 0 }
@@ -85,12 +120,20 @@ local record_clock_id = 0
 local env_graph
 local filter_graph
 
+-- Guard against redraw/arc_redraw before params exist
+local params_ready = false
+
 
 
 -- INIT
 function init()
-  init_polls()
   init_params()
+  params_ready = true
+
+  -- Ensure engine polls point at the current track early
+  safe_engine_call("mulawPollTrack", current_track)
+
+  init_polls()
 
   init_env_graph()
   init_filter_graph()
@@ -130,13 +173,41 @@ function init()
 
   -- Auto-start the sequencer
   clock.run(start_sequence)
+
+  -- Start grid quantize clock
+  start_grid_quantize_clock()
 end
 
 function init_polls()
   metro_screen_refresh = metro.init(function(stage)
+    if not params_ready then return end
+
+    -- Drop UI refresh rate on heavy MuLaw screen to avoid audio/arc lag.
+    local desired_time = 1 / 60
+    local on_mulaw_screen = false
+    if screen_mode >= 2 and screen_mode <= 5 then
+      local cs = selected_voice_screen[current_track + 1]
+      if cs == 6 then
+        desired_time = 1 / 30
+        on_mulaw_screen = true
+      end
+    end
+    if metro_screen_refresh.time ~= desired_time then
+      metro_screen_refresh.time = desired_time
+    end
+
     redraw()
     arc_redraw()
-    grid_redraw()
+    -- Grid redraw can be expensive; throttle it on the MuLaw screen.
+    if on_mulaw_screen then
+      grid_redraw_div = (grid_redraw_div or 0) + 1
+      if grid_redraw_div >= 4 then
+        grid_redraw_div = 0
+        grid_redraw()
+      end
+    else
+      grid_redraw()
+    end
   end, 1 / 60)
   metro_screen_refresh:start()
 
@@ -153,6 +224,26 @@ function init_polls()
   end)
   record_pointer_poll.time = 0.05
   record_pointer_poll:start()
+
+  -- MuLaw visualization polls (optional; older engine builds won't have them)
+  do
+    local ok_mix, p_mix = pcall(poll.set, "mulawMix", function(v)
+      mulaw_vis_mix = v
+    end)
+    local ok_bits, p_bits = pcall(poll.set, "mulawBits", function(v)
+      mulaw_vis_bits = v
+    end)
+
+    if ok_mix and ok_bits and p_mix and p_bits then
+      p_mix.time = 0.05
+      p_mix:start()
+      p_bits.time = 0.05
+      p_bits:start()
+      mulaw_vis_available = true
+    else
+      mulaw_vis_available = false
+    end
+  end
 
   metro_info_banner = metro.init(function(stage)
     show_info_banner = false
@@ -353,6 +444,11 @@ function init_params()
 
   params:add_taper("swing", "Swing", 0, 100, 0, 0, "%")
 
+  params:add_group("Grid", 1)
+  params:add_option("grid_quantize_division", "Grid Quantize", {
+    "1/4", "1/8", "1/16", "1/32"
+  }, 2)  -- Default to 1/8
+
   -- ============================================================
   -- MASTER FX SECTION
   -- ============================================================
@@ -503,6 +599,40 @@ function track_params(track)
     engine.lowpassEnvStrength(track, value)
   end)
 
+  -- Effect
+  params:add_group("T" .. track_num .. " Effect", 6)
+
+  params:add_control(prefix .. "mulaw_mix", "MuLaw Dry/Wet", controlspec.new(0, 1, "lin", 0.01, 0))
+  params:set_action(prefix .. "mulaw_mix", function(value)
+    engine.mulawMix(track, value)
+  end)
+
+  params:add_control(prefix .. "mulaw_bits", "MuLaw Bitrate", controlspec.new(4, 12, "lin", 0.1, 8))
+  params:set_action(prefix .. "mulaw_bits", function(value)
+    engine.mulawBits(track, value)
+  end)
+
+  params:add_control(prefix .. "random_mulaw_mix", "Randomize MuLaw Dry/Wet", controlspec.new(0, 1, "lin", 0.01, 0))
+  params:set_action(prefix .. "random_mulaw_mix", function(value)
+    engine.randomMulawMix(track, value)
+  end)
+
+  params:add_control(prefix .. "random_mulaw_bits", "Randomize MuLaw Bitrate", controlspec.new(0, 1, "lin", 0.01, 0))
+  params:set_action(prefix .. "random_mulaw_bits", function(value)
+    engine.randomMulawBits(track, value)
+  end)
+
+  -- Advanced (not mapped to encoders yet)
+  params:add_control(prefix .. "mulaw_mu", "MuLaw Mu", controlspec.new(10, 1000, "lin", 1, 255))
+  params:set_action(prefix .. "mulaw_mu", function(value)
+    engine.mulawMu(track, value)
+  end)
+
+  params:add_control(prefix .. "mulaw_dither", "MuLaw Dither", controlspec.new(0, 0.5, "lin", 0.01, 0))
+  params:set_action(prefix .. "mulaw_dither", function(value)
+    engine.mulawDither(track, value)
+  end)
+
   -- Randomization
   params:add_group("T" .. track_num .. " Randomization", 10)
 
@@ -646,6 +776,7 @@ end
 function update_track_displays()
   update_env_graph()
   update_filter_graph()
+  safe_engine_call("mulawPollTrack", current_track)
 end
 
 -- SCREENS
@@ -698,6 +829,8 @@ function redraw()
       screens.draw_random_fifth_octave_screen()
     elseif current_screen == 5 then
       draw_filter_screen()
+    elseif current_screen == 6 then
+      draw_mulaw_screen()
     end
   elseif screen_mode == 6 then
     screens.draw_delay_screen()
@@ -811,6 +944,79 @@ function draw_filter_screen()
 
   screen.level(1)
   screen.rect(random_lowpass_bar_x, bar_y, bar_max_width, bar_height)
+  screen.stroke()
+end
+
+function draw_mulaw_screen()
+  local mix = params:get(get_track_param("mulaw_mix"))
+  local bits = params:get(get_track_param("mulaw_bits"))
+  local random_mix = params:get(get_track_param("random_mulaw_mix"))
+  local random_bits = params:get(get_track_param("random_mulaw_bits"))
+
+  -- Use last-triggered (randomized) values for the visualization when available,
+  -- otherwise fall back to the current param values.
+  local vis_mix_raw = mulaw_vis_available and mulaw_vis_mix or mix
+  local vis_bits_raw = mulaw_vis_available and mulaw_vis_bits or bits
+
+  -- Make the visual intensity ramp up toward 100% (more dramatic near the top)
+  -- and avoid ANY per-step animation when effective mix is 0.
+  local amt_raw = util.clamp(vis_mix_raw, 0, 1)
+  local amt = 0
+  if amt_raw > 0.001 then
+    amt = amt_raw ^ 2.2
+  end
+
+  -- If mix is effectively 0, freeze the preview to a stable "clean" state
+  -- (ignore randomized bits changes entirely).
+  local vis_bits = (amt == 0) and 12 or util.clamp(vis_bits_raw, 4, 12)
+
+  -- ============================================================
+  -- Posterization preview (image-compression-ish)
+  -- ============================================================
+  -- Leave some margin for the left/right UI indicators
+  local img_w = 108
+  local img_h = 50
+  local img_x = circle_x - (img_w / 2)
+  local img_y = circle_y - (img_h / 2)
+
+  -- Bits -> number of tonal levels + block size (both fade in with amt)
+  local bits_norm = util.clamp((vis_bits - 4) / 8, 0, 1)
+  local levels_by_bits = util.clamp(math.floor(util.linlin(0, 1, 3, 12, bits_norm) + 0.5), 3, 12)
+  local macro_by_bits = util.clamp(math.floor(util.linlin(0, 1, 4, 1, bits_norm) + 0.5), 1, 4) -- low bits => bigger blocks
+  local levels = util.clamp(math.floor(util.linlin(0, 1, 12, levels_by_bits, amt) + 0.5), 3, 12)
+  local macro = util.clamp(math.floor(util.linlin(0, 1, 1, macro_by_bits, amt) + 0.5), 1, 4)
+
+  -- Fixed grid for performance (180 rects max), macro-blocked for low bits
+  local cell_w = img_w / mulaw_img_cols
+  local cell_h = img_h / mulaw_img_rows
+  for gy = 0, mulaw_img_rows - 1 do
+    for gx = 0, mulaw_img_cols - 1 do
+      local mx = math.floor(gx / macro) * macro
+      local my = math.floor(gy / macro) * macro
+      local v = mulaw_img_base[my + 1][mx + 1]
+
+      local checker = mulaw_img_checker[gy + 1][gx + 1]
+      local dither = checker * (1 / math.max(2, levels)) * (amt * 0.9)
+      local vq = util.clamp(v + dither, 0, 1)
+      local q = math.floor(vq * (levels - 1) + 0.5) / (levels - 1)
+      local blended = v + ((q - v) * amt)
+
+      local lvl = util.clamp(math.floor(blended * 14) + 1, 1, 15)
+      screen.level(lvl)
+      local x0 = img_x + math.floor(gx * cell_w)
+      local y0 = img_y + math.floor(gy * cell_h)
+      local x1 = img_x + math.floor((gx + 1) * cell_w)
+      local y1 = img_y + math.floor((gy + 1) * cell_h)
+      local bw = math.max(1, x1 - x0)
+      local bh = math.max(1, y1 - y0)
+      screen.rect(x0, y0, bw, bh)
+      screen.fill()
+    end
+  end
+
+  -- Frame (draw last so it stays consistent at low bitrates)
+  screen.level(2)
+  screen.rect(img_x, img_y, img_w, img_h)
   screen.stroke()
 end
 
@@ -1087,6 +1293,8 @@ function enc(n, delta)
         handle_fifth_octave_enc(n, delta)
       elseif current_screen == 5 then
         handle_filter_enc(n, delta)
+      elseif current_screen == 6 then
+        handle_mulaw_enc(n, delta)
       end
     elseif screen_mode == 6 then
       handle_delay_screen_enc(n, delta)
@@ -1151,8 +1359,8 @@ end
 function handle_pan_amp_enc(n, delta)
   if shift then
     -- Direct pan and volume control
-    if n == 2 then utils.handle_param_change(get_track_param("pan"), delta, -1, 1, 0.05, "lin") end
-    if n == 3 then utils.handle_param_change(get_track_param("volume"), delta, 0, 1, 0.01, "lin") end
+    if n == 2 then utils.handle_param_change(get_track_param("pan"), delta, -1, 1, 0.02, "lin") end
+    if n == 3 then utils.handle_param_change(get_track_param("volume"), delta, 0, 1, 0.005, "lin") end
   else
     -- Random pan and amp
     if n == 2 then utils.handle_param_change(get_track_param("random_pan"), delta, 0, 1, 0.01, "lin") end
@@ -1165,11 +1373,13 @@ function handle_delay_screen_enc(n, delta)
     if shift then
       if show_info_banner then
         -- Update Mix value
-        params:delta("delay_mix", delta)
+        local current_mix = params:get("delay_mix")
+        local new_mix = util.clamp(current_mix + delta * 0.01, 0, 1)
+        params:set("delay_mix", new_mix)
         if record_slot > 0 then
-          record_pattern_event("delay_mix", params:get("delay_mix"))
+          record_pattern_event("delay_mix", new_mix)
         end
-        set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
+        set_show_info_banner("Mix: " .. string.format("%.2f%%", new_mix * 100))
       else
         -- Show current Mix value
         set_show_info_banner("Mix: " .. string.format("%.2f%%", params:get("delay_mix") * 100))
@@ -1191,11 +1401,13 @@ function handle_delay_screen_enc(n, delta)
           end
           set_show_info_banner(utils.delay_divisions_as_strings[params:get("delay_division")])
         else
-          params:delta("delay_time", delta)
+          local current_time = params:get("delay_time")
+          local new_time = util.clamp(current_time + delta * 0.01, 0, 8)
+          params:set("delay_time", new_time)
           if record_slot > 0 then
-            record_pattern_event("delay_time", params:get("delay_time"))
+            record_pattern_event("delay_time", new_time)
           end
-          set_show_info_banner(string.format("%.2f", params:get("delay_time")))
+          set_show_info_banner(string.format("%.2f", new_time))
         end
       else
         delay_division_delta_accum = 0
@@ -1210,11 +1422,13 @@ function handle_delay_screen_enc(n, delta)
     if shift then
       if show_info_banner then
         -- Update Rotate value
-        params:delta("rotate", delta)
+        local current_rotate = params:get("rotate")
+        local new_rotate = util.clamp(current_rotate + delta * 0.01, 0, 1)
+        params:set("rotate", new_rotate)
         if record_slot > 0 then
-          record_pattern_event("rotate", params:get("rotate"))
+          record_pattern_event("rotate", new_rotate)
         end
-        set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
+        set_show_info_banner("Rotate: " .. string.format("%.2f", new_rotate))
       else
         -- Show current Rotate value
         set_show_info_banner("Rotate: " .. string.format("%.2f", params:get("rotate")))
@@ -1222,11 +1436,13 @@ function handle_delay_screen_enc(n, delta)
     else
       if show_info_banner then
         -- Update Feedback value
-        params:delta("delay_feedback", delta)
+        local current_feedback = params:get("delay_feedback")
+        local new_feedback = util.clamp(current_feedback + delta * 0.01, 0, 1)
+        params:set("delay_feedback", new_feedback)
         if record_slot > 0 then
-          record_pattern_event("delay_feedback", params:get("delay_feedback"))
+          record_pattern_event("delay_feedback", new_feedback)
         end
-        set_show_info_banner('FB: ' .. string.format("%.0f%%", params:get("delay_feedback") * 100))
+        set_show_info_banner('FB: ' .. string.format("%.0f%%", new_feedback * 100))
       else
         -- Show current Feedback value
         set_show_info_banner('FB: ' .. string.format("%.0f%%", params:get("delay_feedback") * 100))
@@ -1298,6 +1514,60 @@ function handle_filter_enc(n, delta)
   end
 end
 
+function handle_mulaw_enc(n, delta)
+  -- Match Delay screen UX: first movement shows value (banner),
+  -- subsequent movements (while banner is visible) adjust.
+  if n == 2 then
+    if shift then
+      local param_id = get_track_param("random_mulaw_mix")
+      if show_info_banner then
+        local cur = params:get(param_id)
+        local new_val = util.clamp(cur + delta * 0.01, 0, 1)
+        params:set(param_id, new_val)
+        if record_slot > 0 then record_pattern_event(param_id, new_val) end
+        set_show_info_banner("RND MIX " .. string.format("%.0f%%", new_val * 100), "center")
+      else
+        set_show_info_banner("RND MIX " .. string.format("%.0f%%", params:get(param_id) * 100), "center")
+      end
+    else
+      local param_id = get_track_param("mulaw_mix")
+      if show_info_banner then
+        local cur = params:get(param_id)
+        local new_val = util.clamp(cur + delta * 0.01, 0, 1)
+        params:set(param_id, new_val)
+        if record_slot > 0 then record_pattern_event(param_id, new_val) end
+        set_show_info_banner("MIX " .. string.format("%.0f%%", new_val * 100), "center")
+      else
+        set_show_info_banner("MIX " .. string.format("%.0f%%", params:get(param_id) * 100), "center")
+      end
+    end
+  elseif n == 3 then
+    if shift then
+      local param_id = get_track_param("random_mulaw_bits")
+      if show_info_banner then
+        local cur = params:get(param_id)
+        local new_val = util.clamp(cur + delta * 0.01, 0, 1)
+        params:set(param_id, new_val)
+        if record_slot > 0 then record_pattern_event(param_id, new_val) end
+        set_show_info_banner("RND BITS " .. string.format("%.0f%%", new_val * 100), "center")
+      else
+        set_show_info_banner("RND BITS " .. string.format("%.0f%%", params:get(param_id) * 100), "center")
+      end
+    else
+      local param_id = get_track_param("mulaw_bits")
+      if show_info_banner then
+        local cur = params:get(param_id)
+        local new_val = util.clamp(cur + delta * 0.1, 4, 12)
+        params:set(param_id, new_val)
+        if record_slot > 0 then record_pattern_event(param_id, new_val) end
+        set_show_info_banner("BITS " .. string.format("%.2f", new_val), "center")
+      else
+        set_show_info_banner("BITS " .. string.format("%.2f", params:get(param_id)), "center")
+      end
+    end
+  end
+end
+
 function handle_record_enc(n, delta)
   if n == 2 then
     -- Switch between tracks (this changes which track's recording settings we see)
@@ -1305,9 +1575,11 @@ function handle_record_enc(n, delta)
   elseif n == 3 then
     -- Adjust loop length for current track
     local param_id = get_track_param("loop_length_in_beats")
-    params:delta(param_id, delta)
+    local current_length = params:get(param_id)
+    local new_length = util.clamp(current_length + delta * 0.5, 1, 64)
+    params:set(param_id, new_length)
     if record_slot > 0 then
-      record_pattern_event(param_id, params:get(param_id))
+      record_pattern_event(param_id, new_length)
     end
   end
 end
@@ -1315,14 +1587,14 @@ end
 function handle_tempo_enc(n, delta)
   if n == 2 then
     local current_bpm = clock.get_tempo()
-    local new_bpm = util.clamp(current_bpm + delta, 20, 300)
+    local new_bpm = util.clamp(current_bpm + delta * 0.1, 20, 300)
     params:set("clock_tempo", new_bpm)
     if record_slot > 0 then
       record_pattern_event("clock_tempo", new_bpm)
     end
   elseif n == 3 then
     local current_swing = params:get("swing")
-    local new_swing = util.clamp(current_swing + delta, 0, 100)
+    local new_swing = util.clamp(current_swing + delta * 0.5, 0, 100)
     params:set("swing", new_swing)
     if record_slot > 0 then
       record_pattern_event("swing", new_swing)
@@ -1396,6 +1668,15 @@ end
 
 -- GRID
 function grid_key(x, y, z)
+  -- Row 8, Column 15: Quantize button (toggle)
+  if x == 15 and y == 8 then
+    if z == 1 then
+      grid_quantize_enabled = not grid_quantize_enabled
+      set_show_info_banner("GRID QUANTIZE " .. (grid_quantize_enabled and "ON" or "OFF"), "center")
+    end
+    return
+  end
+
   -- Row 8, Column 16: Shift button (hold to clear patterns)
   if x == 16 and y == 8 then
     shift = (z == 1)
@@ -1505,17 +1786,19 @@ function grid_key(x, y, z)
         if shift then
           -- Shift + Track button: Toggle play/stop for that track
           local track_index = y - 2  -- Maps rows 2-5 to tracks 0-3
-          local track_param = "t" .. (track_index + 1) .. "_play"
-          local is_playing = params:get(track_param)
-          local new_value = 1 - is_playing
-          params:set(track_param, new_value)
+          execute_grid_action(function()
+            local track_param = "t" .. (track_index + 1) .. "_play"
+            local is_playing = params:get(track_param)
+            local new_value = 1 - is_playing
+            params:set(track_param, new_value)
 
-          -- Record pattern event
-          if record_slot > 0 then
-            record_pattern_event(track_param, new_value)
-          end
+            -- Record pattern event
+            if record_slot > 0 then
+              record_pattern_event(track_param, new_value)
+            end
 
-          set_show_info_banner("TRACK " .. (track_index + 1) .. (is_playing == 1 and " STOP" or " START"), "center")
+            set_show_info_banner("TRACK " .. (track_index + 1) .. (is_playing == 1 and " STOP" or " START"), "center")
+          end)
         else
           -- Normal press: Switch to track mode
           if screen_mode == y then
@@ -1535,7 +1818,7 @@ function grid_key(x, y, z)
     if x == 1 then
       -- Row 8: Start/Stop all tracks
       if y == 8 then
-        toggle_all_tracks()
+        execute_grid_action(toggle_all_tracks)
       elseif screen_mode == 1 then
         -- Tape mode: 2 sub-screens
         if y >= 1 and y <= number_of_global_screens then
@@ -1548,6 +1831,28 @@ function grid_key(x, y, z)
         end
       end
       -- Delay mode has no sub-screens
+    end
+
+    -- Tape recorder screen controls
+    if screen_mode == 1 and global_screen == 1 then
+      -- Track selector (row 6, columns 7-10)
+      if y == 6 and x >= 7 and x <= 10 then
+        current_track = x - 7  -- Maps columns 7,8,9,10 to tracks 0,1,2,3
+        set_show_info_banner("TRACK " .. (current_track + 1) .. " SELECTED", "center")
+        return
+      end
+
+      -- Record button (row 4, columns 6-11)
+      if y == 4 and x >= 6 and x <= 11 then
+        execute_grid_action(function()
+          local record_param = get_track_param("record")
+          local is_recording = params:get(record_param)
+          local new_value = 1 - is_recording
+          params:set(record_param, new_value)
+          set_show_info_banner("TRACK " .. (current_track + 1) .. (new_value == 1 and " RECORDING" or " STOPPED"), "center")
+        end)
+        return
+      end
     end
 
     -- Step grid for screen 1 (sequencer) on track modes
@@ -1576,17 +1881,19 @@ function grid_key(x, y, z)
           if step_index <= track_steps then
             local track_prefix = "t" .. (current_track + 1) .. "_"
 
-            if shift then
-              -- Shift + step: toggle reverse
-              local reverse_param = track_prefix .. "reverse" .. step_index
-              local current_reverse = params:get(reverse_param)
-              params:set(reverse_param, 1 - current_reverse)
-            else
-              -- Normal press: toggle step on/off
-              local active_param = track_prefix .. "active_" .. step_index
-              local current_value = params:get(active_param)
-              params:set(active_param, 1 - current_value)
-            end
+            execute_grid_action(function()
+              if shift then
+                -- Shift + step: toggle reverse
+                local reverse_param = track_prefix .. "reverse" .. step_index
+                local current_reverse = params:get(reverse_param)
+                params:set(reverse_param, 1 - current_reverse)
+              else
+                -- Normal press: toggle step on/off
+                local active_param = track_prefix .. "active_" .. step_index
+                local current_value = params:get(active_param)
+                params:set(active_param, 1 - current_value)
+              end
+            end)
           end
         end
       end
@@ -1654,14 +1961,16 @@ function grid_key(x, y, z)
               record_pattern_event(semitone_param, final_semitone)
             end
 
-            -- Trigger a preview sound with calculated pitch
-            local rate = 2 ^ (final_semitone / 12)
-            local amp = 1.0  -- Default amplitude
-            local pan = params:get(get_track_param("pan"))
-            local reverse = 0  -- Forward playback
+            -- Only trigger preview sound when shift is held
+            if shift then
+              local rate = 2 ^ (final_semitone / 12)
+              local amp = 1.0  -- Default amplitude
+              local pan = params:get(get_track_param("pan"))
+              local reverse = 0  -- Forward playback
 
-            -- Play step 1 with calculated pitch for preview
-            engine.play(current_track, 1, amp, rate, pan, reverse)
+              -- Play step 1 with calculated pitch for preview
+              engine.play(current_track, 1, amp, rate, pan, reverse)
+            end
 
             -- Show feedback
             set_show_info_banner(final_semitone .. " ST", "center")
@@ -1674,6 +1983,9 @@ end
 
 function grid_redraw()
   g:all(0)  -- Clear all LEDs
+
+  -- Row 8, Column 15: Quantize button
+  g:led(15, 8, grid_quantize_enabled and 15 or 6)
 
   -- Row 8, Column 16: Shift button (brighter to distinguish from sub-screens)
   g:led(16, 8, shift and 15 or 6)
@@ -1781,15 +2093,15 @@ function grid_redraw()
       -- Check if currently recording on current track
       local is_recording = params:get(get_track_param("record")) == 1
 
-      -- Only show position if recording on track 0 (poll only supports track 0)
-      if recording_track == 0 and (is_recording or record_pointer > 0) then
-        -- Calculate which LED should be lit based on position
-        local position_led = math.floor(record_pointer * num_position_leds) + 1
-        position_led = math.max(1, math.min(position_led, num_position_leds))
+      -- Always show background bar
+      -- Calculate which LED should be lit based on position
+      local position_led = math.floor(record_pointer * num_position_leds) + 1
+      position_led = math.max(1, math.min(position_led, num_position_leds))
 
-        -- Draw position indicator
-        for i = 1, num_position_leds do
-          local brightness = 0
+      -- Draw position indicator
+      for i = 1, num_position_leds do
+        local brightness = 0
+        if recording_track == 0 and record_pointer > 0 then
           if i < position_led then
             brightness = 4  -- Past position: dim
           elseif i == position_led then
@@ -1797,8 +2109,25 @@ function grid_redraw()
           else
             brightness = 2  -- Future position: very dim
           end
-          g:led(position_start_col + i - 1, 2, brightness)
+        else
+          -- Background bar when not recording
+          brightness = 2
         end
+        g:led(position_start_col + i - 1, 2, brightness)
+      end
+
+      -- Record button (row 4, columns 6-11 for bigger button)
+      local is_recording = params:get(get_track_param("record")) == 1
+      local record_brightness = is_recording and 15 or 6
+      for col = 6, 11 do
+        g:led(col, 4, record_brightness)
+      end
+
+      -- Track selector (row 6, centered at columns 7-10 for 4 tracks)
+      for i = 0, 3 do
+        local col = 7 + i  -- Centered at columns 7-10
+        local brightness = (current_track == i) and 15 or 6
+        g:led(col, 6, brightness)
       end
     end
   elseif screen_mode >= 2 and screen_mode <= 5 then
@@ -1977,6 +2306,11 @@ function arc_redraw()
       arc_utils.display_spread_pattern(a, 2, params:get(get_track_param("resonance")), 0.01, 1)
       arc_utils.display_progress_bar(a, 3, params:get(get_track_param("lowpass_env_strength")), 0, 1)
       arc_utils.display_progress_bar(a, 4, params:get(get_track_param("random_lowpass")), 0, 1)
+    elseif current_screen == 6 then
+      arc_utils.display_progress_bar(a, 1, params:get(get_track_param("mulaw_mix")), 0, 1)
+      arc_utils.display_progress_bar(a, 2, params:get(get_track_param("mulaw_bits")), 4, 12)
+      arc_utils.display_progress_bar(a, 3, params:get(get_track_param("random_mulaw_mix")), 0, 1)
+      arc_utils.display_progress_bar(a, 4, params:get(get_track_param("random_mulaw_bits")), 0, 1)
     end
   elseif screen_mode == 6 then
     if params:get("delay_sync") == 1 then
@@ -2212,6 +2546,40 @@ function start_recording(track)
   -- Potential fixes: 1) Stop poll during reset, 2) Modify SC to have a proper reset,
   --                  3) Add per-track phasor support in SC poll
   engine.record(track, 1)
+end
+
+-- Grid quantization helper functions
+function execute_grid_action(action_func)
+  if grid_quantize_enabled then
+    -- Queue the action to be executed on next quantized beat
+    table.insert(grid_action_queue, action_func)
+  else
+    -- Execute immediately
+    action_func()
+  end
+end
+
+function start_grid_quantize_clock()
+  clock.run(function()
+    while true do
+      -- Get quantize division (1=1/4, 2=1/8, 3=1/16, 4=1/32)
+      local division_map = {1, 0.5, 0.25, 0.125}  -- Beat fractions
+      local division_index = params:get("grid_quantize_division")
+      local beat_fraction = division_map[division_index]
+
+      -- Wait for the quantized beat
+      clock.sync(beat_fraction)
+
+      -- Execute all queued actions
+      if #grid_action_queue > 0 then
+        for i, action_func in ipairs(grid_action_queue) do
+          action_func()
+        end
+        -- Clear the queue
+        grid_action_queue = {}
+      end
+    end
+  end)
 end
 
 function start_sequence()
